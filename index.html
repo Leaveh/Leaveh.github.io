@@ -614,80 +614,119 @@
     // ====== 注册 ======
     async function handleRegister(e) {
         e.preventDefault();
-        const username = $('regUsername').value.trim();
-        const email = $('regEmail').value.trim();
-        const password = $('regPassword').value;
-        const confirm = $('regPasswordConfirm').value;
+        const btn = e.target.querySelector('button[type="submit"]');
+        const origText = btn.textContent;
+        btn.textContent = '⏳ 注册中...';
+        btn.disabled = true;
+
         const errEl = $('regError');
         const sucEl = $('regSuccess');
 
-        if (password !== confirm) { showErr(errEl, '两次密码不一致'); return; }
-        if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) { showErr(errEl, '用户名格式不正确（3-16位字母数字下划线）'); return; }
+        try {
+            const username = $('regUsername').value.trim();
+            const email = $('regEmail').value.trim();
+            const password = $('regPassword').value;
+            const confirm = $('regPasswordConfirm').value;
 
-        showLoading(true);
+            if (password !== confirm) { showErr(errEl, '两次密码不一致'); btn.textContent = origText; btn.disabled = false; return; }
+            if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) { showErr(errEl, '用户名格式不正确（3-16位字母数字下划线）'); btn.textContent = origText; btn.disabled = false; return; }
 
-        // 检查用户名是否已被占用
-        const { data: existingUser } = await supabase
-            .from('profiles')
-            .select('username')
-            .eq('username', username)
-            .maybeSingle();
+            showLoading(true);
 
-        if (existingUser) { showErr(errEl, '该用户名已被注册'); showLoading(false); return; }
+            // 检查用户名是否已被占用
+            console.log('[Leaveh] 1.检查用户名:', username);
+            const { data: existingUser, error: err1 } = await supabase
+                .from('profiles')
+                .select('username')
+                .eq('username', username)
+                .maybeSingle();
 
-        // 用 Supabase Auth 注册（metadata 里传 username）
-        const { data, error } = await supabase.auth.signUp({
-            email,
-            password,
-            options: { data: { username } }
-        });
+            if (err1) { console.error('[Leaveh] 查询用户名失败:', err1); showErr(errEl, '查询失败: ' + (err1.message||JSON.stringify(err1))); showLoading(false); btn.textContent = origText; btn.disabled = false; return; }
+            if (existingUser) { showErr(errEl, '该用户名已被注册'); showLoading(false); btn.textContent = origText; btn.disabled = false; return; }
 
-        if (error) {
-            showErr(errEl, error.message.includes('already registered') ? '该邮箱已被注册' : error.message);
+            // 用 Supabase Auth 注册
+            console.log('[Leaveh] 2.注册Auth:', email);
+            const { data, error } = await supabase.auth.signUp({
+                email,
+                password,
+                options: { data: { username } }
+            });
+
+            if (error) {
+                console.error('[Leaveh] 注册失败:', error);
+                showErr(errEl, error.message?.includes('already registered') ? '该邮箱已被注册' : '注册失败: ' + (error.message || JSON.stringify(error)));
+                showLoading(false);
+                btn.textContent = origText;
+                btn.disabled = false;
+                return;
+            }
+
+            showSuc(sucEl, '注册成功！正在跳转登录...');
+            setTimeout(() => {
+                switchModal('registerModal', 'loginModal');
+                $('loginEmail').value = email;
+                sucEl.style.display = 'none';
+            }, 1200);
+        } catch(err) {
+            console.error('[Leaveh] 注册异常:', err);
+            showErr(errEl, '系统错误: ' + (err.message || String(err)));
+        } finally {
             showLoading(false);
-            return;
+            btn.textContent = origText;
+            btn.disabled = false;
         }
-
-        showSuc(sucEl, '注册成功！正在跳转登录...');
-        setTimeout(() => {
-            switchModal('registerModal', 'loginModal');
-            $('loginEmail').value = email;
-            sucEl.style.display = 'none';
-        }, 1200);
-        showLoading(false);
     }
 
     // ====== 登录 ======
     async function handleLogin(e) {
         e.preventDefault();
+        const btn = e.target.querySelector('button[type="submit"]');
+        const origText = btn.textContent;
+        btn.textContent = '⏳ 登录中...';
+        btn.disabled = true;
+
         const email = $('loginEmail').value.trim();
         const password = $('loginPassword').value;
         const errEl = $('loginError');
 
-        showLoading(true);
+        try {
+            showLoading(true);
+            console.log('[Leaveh] 3.登录:', email);
 
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
-        if (error) {
-            showErr(errEl, '邮箱或密码错误');
+            if (error) {
+                console.error('[Leaveh] 登录失败:', error);
+                showErr(errEl, '登录失败: ' + (error.message || JSON.stringify(error)));
+                showLoading(false);
+                btn.textContent = origText;
+                btn.disabled = false;
+                return;
+            }
+
+            // 获取 profile 并检查封禁
+            currentProfile = await getMyProfile();
+            if (currentProfile && currentProfile.banned) {
+                await supabase.auth.signOut();
+                currentProfile = null;
+                showErr(errEl, '该账号已被封禁，无法登录');
+                showLoading(false);
+                btn.textContent = origText;
+                btn.disabled = false;
+                return;
+            }
+
+            closeModal('loginModal');
+            updateAuthUI();
+            renderPosts();
+        } catch(err) {
+            console.error('[Leaveh] 登录异常:', err);
+            showErr(errEl, '系统错误: ' + (err.message || String(err)));
+        } finally {
             showLoading(false);
-            return;
+            btn.textContent = origText;
+            btn.disabled = false;
         }
-
-        // 获取 profile 并检查封禁
-        currentProfile = await getMyProfile();
-        if (currentProfile && currentProfile.banned) {
-            await supabase.auth.signOut();
-            currentProfile = null;
-            showErr(errEl, '该账号已被封禁，无法登录');
-            showLoading(false);
-            return;
-        }
-
-        closeModal('loginModal');
-        updateAuthUI();
-        renderPosts();
-        showLoading(false);
     }
 
     // ====== 登出 ======
@@ -1423,6 +1462,31 @@
                 `;
             return;
         }
+
+        // 测试 Supabase 连通性（显示在页面顶部）
+        (async () => {
+            const banner = document.createElement('div');
+            banner.id = 'sb-status';
+            banner.style.cssText = 'text-align:center;padding:8px;font-size:13px;font-family:system-ui;';
+            document.body.prepend(banner);
+            try {
+                const r = await fetch(REST_URL+'/profiles?select=id&limit=1', {
+                    headers: _headers(),
+                    signal: AbortSignal.timeout(8000)
+                });
+                if (r.ok) {
+                    banner.style.background = '#d4edda'; banner.style.color = '#155724';
+                    banner.textContent = '✅ 后端已连接 (Supabase '+new Date().toLocaleTimeString()+')';
+                    setTimeout(() => { try{banner.remove();}catch(e){} }, 4000);
+                } else {
+                    throw new Error('HTTP '+r.status);
+                }
+            } catch(e) {
+                banner.style.background = '#f8d7da'; banner.style.color = '#721c24';
+                banner.innerHTML = '⚠️ 后端连接失败: ' + e.message + ' — <b>注册/登录可能无法使用</b>（检查网络或API密钥）';
+                console.error('[Leaveh] 连接测试失败:', e);
+            }
+        })();
 
         // 监听认证状态变化
         supabase.auth.onAuthStateChange((event, session) => {
