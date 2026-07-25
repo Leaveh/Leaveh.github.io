@@ -103,11 +103,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS update_profiles_updated_at ON profiles;
+DROP TRIGGER IF EXISTS update_profiles_updated_t ON profiles;
 CREATE TRIGGER update_profiles_updated_t BEFORE UPDATE ON profiles FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-DROP TRIGGER IF EXISTS update_posts_updated_at ON posts;
-CREATE TRIGGER update_posts_updated_at BEFORE UPDATE ON posts FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS update_posts_updated_t ON posts;
+CREATE TRIGGER update_posts_updated_t BEFORE UPDATE ON posts FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ============================================================
 -- 注册时自动创建 profile 的触发器
@@ -146,36 +146,54 @@ ALTER TABLE daily_exp ENABLE ROW LEVEL SECURITY;
 ALTER TABLE redeem_codes ENABLE ROW LEVEL SECURITY;
 
 -- profiles: 所有人可读，自己可改，管理员可改所有人
+DROP POLICY IF EXISTS "profiles_select" ON profiles;
 CREATE POLICY "profiles_select" ON profiles FOR SELECT USING (true);
+DROP POLICY IF EXISTS "profiles_update" ON profiles;
 CREATE POLICY "profiles_update" ON profiles FOR UPDATE USING (auth.uid() = id OR EXISTS(SELECT 1 FROM profiles WHERE id=auth.uid() AND is_admin=TRUE));
+DROP POLICY IF EXISTS "profiles_insert" ON profiles;
 CREATE POLICY "profiles_insert" ON profiles FOR INSERT WITH CHECK (auth.uid() = id OR EXISTS(SELECT 1 FROM profiles WHERE id=auth.uid() AND is_admin=TRUE));
 
 -- posts: 所有人可读，登录用户可发帖，作者或管理员可删/改
+DROP POLICY IF EXISTS "posts_select" ON posts;
 CREATE POLICY "posts_select" ON posts FOR SELECT USING (true);
+DROP POLICY IF EXISTS "posts_insert" ON posts;
 CREATE POLICY "posts_insert" ON posts FOR INSERT WITH CHECK (auth.uid() IS NOT NULL AND NOT EXISTS(SELECT 1 FROM profiles WHERE id=auth.uid() AND banned=TRUE));
+DROP POLICY IF EXISTS "posts_update" ON posts;
 CREATE POLICY "posts_update" ON posts FOR UPDATE USING (author_id=auth.uid() OR EXISTS(SELECT 1 FROM profiles WHERE id=auth.uid() AND is_admin=TRUE));
+DROP POLICY IF EXISTS "posts_delete" ON posts;
 CREATE POLICY "posts_delete" ON posts FOR DELETE USING (author_id=auth.uid() OR EXISTS(SELECT 1 FROM profiles WHERE id=auth.uid() AND is_admin=TRUE));
 
 -- comments: 所有人可读，未封禁登录用户可评论
+DROP POLICY IF EXISTS "comments_select" ON comments;
 CREATE POLICY "comments_select" ON comments FOR SELECT USING (true);
+DROP POLICY IF EXISTS "comments_insert" ON comments;
 CREATE POLICY "comments_insert" ON comments FOR INSERT WITH CHECK (
     auth.uid() IS NOT NULL
     AND NOT EXISTS(SELECT 1 FROM profiles WHERE id=auth.uid() AND (banned=TRUE OR muted=TRUE))
 );
+DROP POLICY IF EXISTS "comments_update" ON comments;
 CREATE POLICY "comments_update" ON comments FOR UPDATE USING (author_id=auth.uid() OR EXISTS(SELECT 1 FROM profiles WHERE id=auth.uid() AND is_admin=TRUE));
+DROP POLICY IF EXISTS "comments_delete" ON comments;
 CREATE POLICY "comments_delete" ON comments FOR DELETE USING (author_id=auth.uid() OR EXISTS(SELECT 1 FROM profiles WHERE id=auth.uid() AND is_admin=TRUE));
 
 -- likes: 登录用户可点赞/取消
+DROP POLICY IF EXISTS "likes_select" ON likes;
 CREATE POLICY "likes_select" ON likes FOR SELECT USING (true);
+DROP POLICY IF EXISTS "likes_insert" ON likes;
 CREATE POLICY "likes_insert" ON likes FOR INSERT WITH CHECK (auth.uid() IS NOT NULL AND user_id=auth.uid());
+DROP POLICY IF EXISTS "likes_delete" ON likes;
 CREATE POLICY "likes_delete" ON likes FOR DELETE USING (user_id=auth.uid());
 
 -- daily_exp: 用户可读自己的，系统插入
+DROP POLICY IF EXISTS "daily_exp_select" ON daily_exp;
 CREATE POLICY "daily_exp_select" ON daily_exp FOR SELECT USING (auth.uid() = user_id OR EXISTS(SELECT 1 FROM profiles WHERE id=auth.uid() AND is_admin=TRUE));
+DROP POLICY IF EXISTS "daily_exp_insert" ON daily_exp;
 CREATE POLICY "daily_exp_insert" ON daily_exp FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 
 -- redeem_codes: 所有人可读（用于验证），管理员管理
+DROP POLICY IF EXISTS "redeem_codes_select" ON redeem_codes;
 CREATE POLICY "redeem_codes_select" ON redeem_codes FOR SELECT USING (true);
+DROP POLICY IF EXISTS "redeem_codes_update" ON redeem_codes;
 CREATE POLICY "redeem_codes_update" ON redeem_codes FOR UPDATE USING (EXISTS(SELECT 1 FROM profiles WHERE id=auth.uid() AND is_admin=TRUE));
 
 -- ============================================================
