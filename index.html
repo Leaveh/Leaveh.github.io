@@ -16,8 +16,8 @@
                 <nav class="nav-links">
                     <a href="#" class="active" onclick="filterPosts('all')">首页</a>
                     <a href="#" onclick="filterPosts('公告')">公告</a>
-                    <a href="#" onclick="filterPosts('服务器')">动态</a>
-                    <a href="#" onclick="filterPosts('活动')">服务器</a>
+                    <a href="#" onclick="filterPosts('服务器')">服务器</a>
+                    <a href="#" onclick="filterPosts('活动')">活动</a>
                     <a href="#">关于我们</a>
                 </nav>
             </div>
@@ -394,7 +394,7 @@
 
         const title = $('postTitle').value.trim();
         const category = $('postCategory').value;
-        const tag = $('postTag'].value;
+        const tag = $('postTag').value;
         const summary = $('postSummary').value.trim();
         const content = $('postContent').value.trim();
         const errEl = $('postError');
@@ -458,7 +458,7 @@
         }
 
         // 搜索过滤
-        const keyword = ($('searchInput')?.value || '').trim().toLowerCase();
+        const keyword = (($('searchInput')?.value || '') + ($('searchInput2')?.value || '')).trim().toLowerCase();
         if (keyword) {
             posts = posts.filter(p =>
                 p.title.toLowerCase().includes(keyword) ||
