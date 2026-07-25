@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leaveh 每日新闻</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- 顶部导航栏 -->
+    <header class="navbar">
+        <div class="navbar-inner">
+            <div class="nav-left">
+                <a href="#" class="logo">LEAVEH<span class="logo-sub">NEWS</span></a>
+                <nav class="nav-links">
+                    <a href="#" class="active">首页</a>
+                    <a href="#">资讯</a>
+                    <a href="#">动态</a>
+                    <a href="#">服务器</a>
+                    <a href="#">关于我们</a>
+                </nav>
+            </div>
+            <div class="nav-right">
+                <div class="search-box">
+                    <input type="text" placeholder="搜索新闻..." class="search-input">
+                    <button class="search-btn">🔍</button>
+                </div>
+                <a href="#" class="nav-link-sm">登录</a>
+                <a href="#" class="nav-link-sm">注册</a>
+            </div>
+        </div>
+    </header>
+
+    <!-- 公告横幅 -->
+    <div class="announcement-bar">
+        <span class="announcement-icon">📢</span>
+        <p>欢迎来到 Leaveh 每日新闻 — 掌握最新资讯，关注社区动向</p>
+        <button class="announcement-close">×</button>
+    </div>
+
+    <!-- 主内容区 -->
+    <main class="main-container">
+        <!-- 左侧内容 -->
+        <div class="content-area">
+            <!-- 页面标题 -->
+            <section class="page-header">
+                <h1>新闻资讯</h1>
+                <p class="page-desc">掌握最新资讯，关注社区动向</p>
+            </section>
+
+            <!-- 分类标签 -->
+            <div class="category-tabs">
+                <button class="tab active">全部</button>
+                <button class="tab">公告</button>
+                <button class="tab">服务器</button>
+                <button class="tab">活动</button>
+                <button class="tab">技术</button>
+            </div>
+
+            <!-- 新闻列表 -->
+            <div class="news-list">
+
+                <!-- 新闻卡片 1 - 置顶/重要 -->
+                <article class="news-card featured">
+                    <div class="card-left">
+                        <div class="card-badge hot">🔥 热讯</div>
+                        <div class="card-avatar">📡</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="card-tags">
+                            <span class="tag tag-danger">紧急</span>
+                            <span class="tag tag-warning">服务器</span>
+                        </div>
+                        <h2 class="card-title"><a href="#">Leaveh 纯数据服务器掉了！用户只能暂等恢复了</a></h2>
+                        <p class="card-summary">由于未知原因，Leaveh 纯数据服务器出现故障，目前技术人员正在紧急排查修复中。请各位用户耐心等待恢复通知。</p>
+                        <div class="card-meta">
+                            <span class="meta-item">👤 Leaveh官方</span>
+                            <span class="meta-item">🕐 2026/07/25 19:46</span>
+                            <span class="meta-item">💬 回复: 128</span>
+                            <span class="meta-item">👁 查看: 2.4K</span>
+                        </div>
+                    </div>
+                    <div class="card-right">
+                        <span class="card-new">NEW</span>
+                    </div>
+                </article>
+
+                <!-- 新闻卡片 2 - 示例占位 -->
+                <article class="news-card">
+                    <div class="card-left">
+                        <div class="card-avatar">📰</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="card-tags">
+                            <span class="tag tag-info">更新</span>
+                        </div>
+                        <h2 class="card-title"><a href="#">[待填写] 新闻标题占位</a></h2>
+                        <p class="card-summary">此处填写新闻摘要内容...</p>
+                        <div class="card-meta">
+                            <span class="meta-item">👤 作者名</span>
+                            <span class="meta-item">🕐 2026/07/25 --:--</span>
+                            <span class="meta-item">💬 回复: --</span>
+                            <span class="meta-item">👁 查看: --</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- 新闻卡片 3 - 示例占位 -->
+                <article class="news-card">
+                    <div class="card-left">
+                        <div class="card-avatar">📢</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="card-tags">
+                            <span class="tag tag-success">公告</span>
+                        </div>
+                        <h2 class="card-title"><a href="#">[待填写] 新闻标题占位</a></h2>
+                        <p class="card-summary">此处填写新闻摘要内容...</p>
+                        <div class="card-meta">
+                            <span class="meta-item">👤 作者名</span>
+                            <span class="meta-item">🕐 2026/07/25 --:--</span>
+                            <span class="meta-item">💬 回复: --</span>
+                            <span class="meta-item">👁 查看: --</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- 新闻卡片 4 - 示例占位 -->
+                <article class="news-card">
+                    <div class="card-left">
+                        <div class="card-avatar">⚙️</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="card-tags">
+                            <span class="tag tag-primary">技术</span>
+                        </div>
+                        <h2 class="card-title"><a href="#">[待填写] 新闻标题占位</a></h2>
+                        <p class="card-summary">此处填写新闻摘要内容...</p>
+                        <div class="card-meta">
+                            <span class="meta-item">👤 作者名</span>
+                            <span class="meta-item">🕐 2026/07/25 --:--</span>
+                            <span class="meta-item">💬 回复: --</span>
+                            <span class="meta-item">👁 查看: --</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- 新闻卡片 5 - 示例占位 -->
+                <article class="news-card">
+                    <div class="card-left">
+                        <div class="card-avatar">🎮</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="card-tags">
+                            <span class="tag tag-purple">活动</span>
+                        </div>
+                        <h2 class="card-title"><a href="#">[待填写] 新闻标题占位</a></h2>
+                        <p class="card-summary">此处填写新闻摘要内容...</p>
+                        <div class="card-meta">
+                            <span class="meta-item">👤 作者名</span>
+                            <span class="meta-item">🕐 2026/07/25 --:--</span>
+                            <span class="meta-item">💬 回复: --</span>
+                            <span class="meta-item">👁 查看: --</span>
+                        </div>
+                    </div>
+                </article>
+
+            </div>
+
+            <!-- 分页器 -->
+            <div class="pagination">
+                <button class="page-btn active">1</button>
+                <button class="page-btn">2</button>
+                <button class="page-btn">3</button>
+                <span class="page-dots">...</span>
+                <button class="page-btn">36</button>
+                <button class="page-btn next">下一页 ›</button>
+            </div>
+        </div>
+
+        <!-- 右侧边栏 -->
+        <aside class="sidebar">
+            <!-- 广告位 / 热门推荐 -->
+            <div class="sidebar-card ad-card">
+                <div class="ad-banner ad-1">
+                    <span class="ad-text">广告位招租</span>
+                    <span class="ad-sub">联系管理员投放</span>
+                </div>
+            </div>
+
+            <div class="sidebar-card ad-card">
+                <div class="ad-banner ad-2">
+                    <span class="ad-text">合作伙伴</span>
+                    <span class="ad-sub">欢迎洽谈合作</span>
+                </div>
+            </div>
+
+            <!-- 在线统计 -->
+            <div class="sidebar-card stats-card">
+                <h3 class="sidebar-title">📊 站点统计</h3>
+                <div class="stats-list">
+                    <div class="stat-row">
+                        <span class="stat-label">今日新闻</span>
+                        <span class="stat-value">12</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">总新闻数</span>
+                        <span class="stat-value">1,024</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">今日访问</span>
+                        <span class="stat-value">5,632</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 快捷链接 -->
+            <div class="sidebar-card links-card">
+                <h3 class="sidebar-title">🔗 快捷链接</h3>
+                <ul class="link-list">
+                    <li><a href="#">📌 服务器状态</a></li>
+                    <li><a href="#">📋 提交新闻</a></li>
+                    <li><a href="#">📧 联系我们</a></li>
+                    <li><a href="#">❓ 常见问题</a></li>
+                </ul>
+            </div>
+        </aside>
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="footer">
+        <div class="footer-inner">
+            <p>&copy; 2026 Leaveh 每日新闻 · All Rights Reserved</p>
+            <p class="footer-sub">Powered by Leaveh · Made with ❤️</p>
+        </div>
+    </footer>
+</body>
+</html>
