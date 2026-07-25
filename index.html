@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Leaveh 每日新闻</title>
     <link rel="stylesheet" href="style.css">
+    <!-- Supabase JS SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -98,6 +100,12 @@
                 <button class="btn-register" onclick="openModal('registerModal')" style="margin-top:12px;">立即注册</button>
             </div>
 
+            <!-- 加载状态 -->
+            <div class="loading-state" id="loadingState" style="display:none; text-align:center; padding:40px;">
+                <div style="font-size:32px; animation: spin 1s linear infinite;">⏳</div>
+                <p style="color:#888; margin-top:8px;">加载中...</p>
+            </div>
+
             <!-- 分页器 -->
             <div class="pagination" id="pagination"></div>
         </div>
@@ -119,9 +127,9 @@
             <div class="sidebar-card stats-card">
                 <h3 class="sidebar-title">📊 站点统计</h3>
                 <div class="stats-list">
-                    <div class="stat-row"><span class="stat-label">注册用户</span><span class="stat-value" id="statUsers">0</span></div>
-                    <div class="stat-row"><span class="stat-label">总帖子数</span><span class="stat-value" id="statPosts">0</span></div>
-                    <div class="stat-row"><span class="stat-label">今日发帖</span><span class="stat-value" id="statToday">0</span></div>
+                    <div class="stat-row"><span class="stat-label">注册用户</span><span class="stat-value" id="statUsers">-</span></div>
+                    <div class="stat-row"><span class="stat-label">总帖子数</span><span class="stat-value" id="statPosts">-</span></div>
+                    <div class="stat-row"><span class="stat-label">今日发帖</span><span class="stat-value" id="statToday">-</span></div>
                 </div>
             </div>
             <div class="sidebar-card links-card">
@@ -145,8 +153,8 @@
             </div>
             <form onsubmit="handleLogin(event)" class="auth-form">
                 <div class="form-group">
-                    <label>用户名 / 邮箱</label>
-                    <input type="text" id="loginUsername" placeholder="输入用户名或邮箱" required autocomplete="username">
+                    <label>邮箱</label>
+                    <input type="email" id="loginEmail" placeholder="your@email.com" required autocomplete="email">
                 </div>
                 <div class="form-group">
                     <label>密码</label>
@@ -289,24 +297,27 @@
         </div>
     </footer>
 
-    <!-- ==================== JavaScript ==================== -->
+    <!-- ==================== JavaScript (Supabase 后端版) ==================== -->
     <script>
-    // ====== 数据存储键名 ======
-    const KEYS = {
-        users: 'leaveh_users',
-        posts: 'leaveh_posts',
-        session: 'leaveh_session',
-        daily: 'leaveh_daily',
-        codesUsed: 'leaveh_codes_used'
-    };
+    // ====== Supabase 配置（替换为你的项目信息） ======
+    const SUPABASE_URL = 'YOUR_SUPABASE_URL';       // 例如 https://xxxx.supabase.co
+    const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     // ====== 常量配置 ======
-    const EXP_PER_LEVEL = 100;          // 每级所需经验（线性）
-    const MAX_LEVEL = 100;              // 满级
+    const EXP_PER_LEVEL = 100;
+    const MAX_LEVEL = 100;
     const ADMIN_USER = 'chenjunlongsb1';
-    const ADMIN_TITLE = '民间Wiki';
-    const REDEEM_CODE = 'LEAVEH-99VIP-7H3X9M';  // 仅可用一次的直升99级兑换码
-    const REDEEM_LEVEL = 99;
+
+    // ====== 全局状态 ======
+    let currentProfile = null;   // 当前登录用户的 profile 对象
+    let currentPage = 1;
+    const pageSize = 8;
+    let currentCategory = 'all';
+    let filterAuthor = null;
+    let currentDetailId = null;
+    let allPostsCache = [];      // 帖子缓存
+    let allProfilesCache = {};   // 用户资料缓存 {username: profile}
 
     // ====== 工具函数 ======
     function $(id) { return document.getElementById(id); }
@@ -317,8 +328,9 @@
         return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     }
     function escapeHtml(str) {
+        if (str == null) return '';
         const div = document.createElement('div');
-        div.textContent = str == null ? '' : str;
+        div.textContent = str;
         return div.innerHTML;
     }
     function getInitial(name) {
@@ -337,64 +349,123 @@
         return Math.min((exp || 0) - base, EXP_PER_LEVEL);
     }
 
-    // ====== 数据访问（带结构迁移） ======
-    function getUsers() { return JSON.parse(localStorage.getItem(KEYS.users) || '[]'); }
-    function saveUsers(arr) { localStorage.setItem(KEYS.users, JSON.stringify(arr)); }
-    function getUser(name) { return getUsers().find(u => u.username === name) || null; }
-    function updateUser(name, fn) {
-        const users = getUsers();
-        const u = users.find(x => x.username === name);
-        if (!u) return null;
-        fn(u);
-        saveUsers(users);
-        return u;
-    }
-    function getPosts() {
-        const posts = JSON.parse(localStorage.getItem(KEYS.posts) || '[]');
-        posts.forEach(p => {
-            if (!p.comments) p.comments = [];
-            if (p.likes == null) p.likes = 0;
-            if (!p.likedBy) p.likedBy = [];
-            (p.comments || []).forEach(c => {
-                if (!c.replies) c.replies = [];
-                if (c.likes == null) c.likes = 0;
-                if (!c.likedBy) c.likedBy = [];
-                (c.replies || []).forEach(r => {
-                    if (r.likes == null) r.likes = 0;
-                    if (!r.likedBy) r.likedBy = [];
-                });
-            });
-        });
-        return posts;
-    }
-    function savePosts(arr) { localStorage.setItem(KEYS.posts, JSON.stringify(arr)); }
+    // ====== 数据获取辅助 ======
 
-    // 当前登录用户（返回完整对象，含 isAdmin/banned/muted/level/exp）
-    function currentUser() {
-        const s = JSON.parse(localStorage.getItem(KEYS.session));
-        if (!s) return null;
-        return getUser(s.username);
+    /** 获取当前用户 session */
+    async function getSession() {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) console.error('getSession error:', error.message);
+        return session;
+    }
+
+    /** 获取当前用户 profile */
+    async function getMyProfile() {
+        const session = await getSession();
+        if (!session) return null;
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+        if (error && error.code !== 'PGRST116') console.error('getMyProfile:', error.message);
+        return data || null;
+    }
+
+    /** 按 username 获取 profile（带缓存） */
+    async function fetchProfile(username) {
+        if (allProfilesCache[username]) return allProfilesCache[username];
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('username', username)
+            .single();
+        if (!error && data) allProfilesCache[username] = data;
+        return data || null;
+    }
+
+    /** 获取所有帖子（按时间倒序） */
+    async function fetchAllPosts() {
+        const { data, error } = await supabase
+            .from('posts')
+            .select('*')
+            .order('created_at', { ascending: false });
+        if (error) { console.error('fetchAllPosts:', error.message); return []; }
+        return data || [];
+    }
+
+    /** 获取帖子的评论（含回复） */
+    async function fetchComments(postId) {
+        const { data, error } = await supabase
+            .from('comments')
+            .select('*')
+            .eq('post_id', postId)
+            .order('created_at', { ascending: true });
+        if (error) { console.error('fetchComments:', error.message); return []; }
+        return data || [];
+    }
+
+    /** 获取统计信息 */
+    async function fetchStats() {
+        const [usersRes, postsRes] = await Promise.all([
+            supabase.from('profiles').select('*', { count: 'exact', head: true }),
+            supabase.from('posts').select('*', { count: 'exact', head: true })
+        ]);
+        const userCount = usersRes.count || 0;
+        const postCount = postsRes.count || 0;
+
+        // 今日发帖数
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const { count: todayCount } = await supabase
+            .from('posts')
+            .select('*', { count: 'exact', head: true })
+            .gte('created_at', todayStart.toISOString());
+
+        return { users: userCount, posts: postCount, today: todayCount || 0 };
     }
 
     // ====== 经验 / 每日奖励 ======
-    function addExp(username, amount) {
-        updateUser(username, u => { u.exp = (u.exp || 0) + amount; });
-        const s = JSON.parse(localStorage.getItem(KEYS.session));
-        if (s && s.username === username) {
-            const u = getUser(username);
-            s.level = levelFromExp(u.exp);
-            localStorage.setItem(KEYS.session, JSON.stringify(s));
-        }
-    }
-    function grantDailyExp(username, type) {
-        const daily = JSON.parse(localStorage.getItem(KEYS.daily) || '{}');
-        const t = daily[username] || {};
-        if (t[type] === todayKey()) return 0;   // 今天已领过
-        t[type] = todayKey();
-        daily[username] = t;
-        localStorage.setItem(KEYS.daily, JSON.stringify(daily));
+    async function grantDailyExp(userId, type) {
         const amount = type === 'comment' ? 10 : 20;
-        addExp(username, amount);
+        const dateStr = todayKey();
+
+        // 检查今天是否已领过
+        const { data: existing } = await supabase
+            .from('daily_exp')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('exp_date', dateStr)
+            .eq('exp_type', type);
+
+        if (existing && existing.length > 0) return 0; // 今天已领
+
+        // 记录并加经验
+        await supabase.from('daily_exp').insert({
+            user_id: userId,
+            exp_date: dateStr,
+            exp_type: type,
+            amount: amount,
+            granted: true
+        });
+
+        // 更新经验值
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('exp')
+            .eq('id', userId)
+            .single();
+
+        const newExp = (profile?.exp || 0) + amount;
+        await supabase
+            .from('profiles')
+            .update({ exp: newExp })
+            .eq('id', userId);
+
+        // 刷新本地状态
+        if (currentProfile && currentProfile.id === userId) {
+            currentProfile.exp = newExp;
+        }
+
         return amount;
     }
 
@@ -418,7 +489,7 @@
     }
 
     // ====== 注册 ======
-    function handleRegister(e) {
+    async function handleRegister(e) {
         e.preventDefault();
         const username = $('regUsername').value.trim();
         const email = $('regEmail').value.trim();
@@ -430,79 +501,95 @@
         if (password !== confirm) { showErr(errEl, '两次密码不一致'); return; }
         if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) { showErr(errEl, '用户名格式不正确（3-16位字母数字下划线）'); return; }
 
-        let users = getUsers();
-        if (users.find(u => u.username === username)) { showErr(errEl, '用户名已被注册'); return; }
-        if (users.find(u => u.email === email)) { showErr(errEl, '邮箱已被注册'); return; }
+        showLoading(true);
 
-        const isAdmin = username === ADMIN_USER;
-        users.push({
-            username,
+        // 检查用户名是否已被占用
+        const { data: existingUser } = await supabase
+            .from('profiles')
+            .select('username')
+            .eq('username', username)
+            .maybeSingle();
+
+        if (existingUser) { showErr(errEl, '该用户名已被注册'); showLoading(false); return; }
+
+        // 用 Supabase Auth 注册（metadata 里传 username）
+        const { data, error } = await supabase.auth.signUp({
             email,
             password,
-            avatar: getInitial(username),
-            createdAt: now(),
-            level: 1,
-            exp: 0,
-            title: isAdmin ? ADMIN_TITLE : '',
-            isAdmin: isAdmin,
-            banned: false,
-            muted: false
+            options: { data: { username } }
         });
-        saveUsers(users);
+
+        if (error) {
+            showErr(errEl, error.message.includes('already registered') ? '该邮箱已被注册' : error.message);
+            showLoading(false);
+            return;
+        }
 
         showSuc(sucEl, '注册成功！正在跳转登录...');
         setTimeout(() => {
             switchModal('registerModal', 'loginModal');
-            $('loginUsername').value = username;
+            $('loginEmail').value = email;
             sucEl.style.display = 'none';
         }, 1200);
+        showLoading(false);
     }
 
     // ====== 登录 ======
-    function handleLogin(e) {
+    async function handleLogin(e) {
         e.preventDefault();
-        const input = $('loginUsername').value.trim();
+        const email = $('loginEmail').value.trim();
         const password = $('loginPassword').value;
         const errEl = $('loginError');
 
-        const users = getUsers();
-        const user = users.find(u => (u.username === input || u.email === input) && u.password === password);
-        if (!user) { showErr(errEl, '用户名/邮箱或密码错误'); return; }
-        if (user.banned) { showErr(errEl, '该账号已被封禁，无法登录'); return; }
+        showLoading(true);
 
-        localStorage.setItem(KEYS.session, JSON.stringify({
-            username: user.username,
-            email: user.email,
-            avatar: user.avatar,
-            level: levelFromExp(user.exp),
-            loginAt: now()
-        }));
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+        if (error) {
+            showErr(errEl, '邮箱或密码错误');
+            showLoading(false);
+            return;
+        }
+
+        // 获取 profile 并检查封禁
+        currentProfile = await getMyProfile();
+        if (currentProfile && currentProfile.banned) {
+            await supabase.auth.signOut();
+            currentProfile = null;
+            showErr(errEl, '该账号已被封禁，无法登录');
+            showLoading(false);
+            return;
+        }
 
         closeModal('loginModal');
         updateAuthUI();
         renderPosts();
+        showLoading(false);
     }
 
     // ====== 登出 ======
-    function logout() {
-        localStorage.removeItem(KEYS.session);
+    async function logout() {
+        await supabase.auth.signOut();
+        currentProfile = null;
         updateAuthUI();
         renderPosts();
     }
 
     // ====== 更新认证 UI ======
-    function updateAuthUI() {
-        const session = JSON.parse(localStorage.getItem(KEYS.session));
+    async function updateAuthUI() {
         const guestEl = $('nav-guest');
         const userEl = $('nav-user');
         const headerBtn = $('headerPostBtn');
 
-        if (session) {
+        currentProfile = await getMyProfile();
+
+        if (currentProfile) {
             guestEl.style.display = 'none';
             userEl.style.display = 'flex';
             headerBtn.style.display = 'block';
-            $('navUsername').textContent = session.username + ' · Lv.' + (session.level || 1);
-            $('navAvatar').textContent = session.avatar;
+            const lv = levelFromExp(currentProfile.exp);
+            $('navUsername').textContent = currentProfile.username + ' · Lv.' + lv;
+            $('navAvatar').textContent = currentProfile.avatar || getInitial(currentProfile.username);
         } else {
             guestEl.style.display = 'flex';
             userEl.style.display = 'none';
@@ -512,12 +599,11 @@
     }
 
     // ====== 发帖 ======
-    function handlePostSubmit(e) {
+    async function handlePostSubmit(e) {
         e.preventDefault();
-        const me = currentUser();
-        if (!me) { openModal('loginModal'); return; }
-        if (me.banned) { alert('账号已被封禁，无法发帖'); return; }
-        if (me.muted) { alert('你已被禁言，无法发帖'); return; }
+        if (!currentProfile) { openModal('loginModal'); return; }
+        if (currentProfile.banned) { toast('账号已被封禁，无法发帖'); return; }
+        if (currentProfile.muted) { toast('你已被禁言，无法发帖'); return; }
 
         const title = $('postTitle').value.trim();
         const category = $('postCategory').value;
@@ -528,107 +614,129 @@
 
         if (!title || !category || !summary) { showErr(errEl, '请填写必填项'); return; }
 
-        const posts = getPosts();
-        posts.unshift({
-            id: Date.now(),
-            title,
-            category,
-            tag,
-            summary,
-            content,
-            author: me.username,
-            authorAvatar: me.avatar,
-            createdAt: now(),
-            views: Math.floor(Math.random() * 100) + 10,
-            likes: 0,
-            likedBy: [],
-            comments: []
-        });
-        savePosts(posts);
+        showLoading(true);
+
+        const { data: post, error } = await supabase
+            .from('posts')
+            .insert({
+                author_id: currentProfile.id,
+                author_username: currentProfile.username,
+                title,
+                category,
+                tag: tag || null,
+                summary,
+                content: content || '',
+                views: Math.floor(Math.random() * 50) + 5
+            })
+            .select()
+            .single();
+
+        if (error) {
+            showErr(errEl, '发布失败：' + error.message);
+            showLoading(false);
+            return;
+        }
 
         closeModal('postModal');
         e.target.reset();
-        const gained = grantDailyExp(me.username, 'post');
+
+        // 每日经验
+        const gained = await grantDailyExp(currentProfile.id, 'post');
         renderPosts();
         updateStats();
         if (gained) toast('发布成功！+' + gained + ' 经验');
+        showLoading(false);
     }
 
-    // ====== 删除帖子（作者本人或管理员） ======
-    function deletePost(id) {
-        const me = currentUser();
-        if (!me) { openModal('loginModal'); return; }
+    // ====== 删除帖子 ======
+    async function deletePost(id) {
+        if (!currentProfile) { openModal('loginModal'); return; }
         if (!confirm('确定要删除这条新闻吗？')) return;
-        let posts = getPosts();
-        const post = posts.find(p => p.id === id);
-        if (!post) return;
-        if (post.author !== me.username && !me.isAdmin) { alert('你只能删除自己发布的新闻'); return; }
 
-        posts = posts.filter(p => p.id !== id);
-        savePosts(posts);
+        // 先检查权限
+        const { data: post } = await supabase
+            .from('posts')
+            .select('author_id')
+            .eq('id', id)
+            .single();
+        if (!post) return;
+
+        if (post.author_id !== currentProfile.id && !currentProfile.isAdmin) {
+            toast('你只能删除自己发布的新闻');
+            return;
+        }
+
+        const { error } = await supabase.from('posts').delete().eq('id', id);
+        if (error) { toast('删除失败：' + error.message); return; }
+
         renderPosts();
         updateStats();
         closeModal('detailModal');
+        toast('已删除');
     }
 
     // ====== 点赞帖子 ======
-    function likePost(id) {
-        const me = currentUser();
-        if (!me) { openModal('loginModal'); return; }
-        const posts = getPosts();
-        const post = posts.find(p => p.id === id);
-        if (!post) return;
-        post.likedBy = post.likedBy || [];
-        const i = post.likedBy.indexOf(me.username);
-        if (i >= 0) { post.likedBy.splice(i, 1); post.likes = (post.likes || 0) - 1; }
-        else { post.likedBy.push(me.username); post.likes = (post.likes || 0) + 1; }
-        savePosts(posts);
+    async function likePost(id) {
+        if (!currentProfile) { openModal('loginModal'); return; }
+
+        // 查找是否已点赞
+        const { data: existing } = await supabase
+            .from('likes')
+            .select('*')
+            .eq('user_id', currentProfile.id)
+            .eq('target_type', 'post')
+            .eq('target_id', id)
+            .maybeSingle();
+
+        if (existing) {
+            // 取消点赞
+            await supabase.from('likes').delete().eq('id', existing.id);
+        } else {
+            // 点赞
+            await supabase.from('likes').insert({
+                user_id: currentProfile.id,
+                target_type: 'post',
+                target_id: id
+            });
+        }
+
         renderPosts();
         if ($('detailModal').classList.contains('show') && currentDetailId === id) renderDetail(id);
     }
 
     // ====== 评论 / 回复 ======
-    function commentCount(post) {
-        return (post.comments || []).reduce((a, c) => a + 1 + ((c.replies || []).length), 0);
-    }
-    function addComment(postId, replyToId) {
-        const me = currentUser();
-        if (!me) { openModal('loginModal'); return; }
-        if (me.banned) { alert('账号已被封禁，无法评论'); return; }
-        if (me.muted) { alert('你已被禁言，无法评论'); return; }
+    async function addComment(postId, replyToId) {
+        if (!currentProfile) { openModal('loginModal'); return; }
+        if (currentProfile.banned) { toast('账号已被封禁，无法评论'); return; }
+        if (currentProfile.muted) { toast('你已被禁言，无法评论'); return; }
 
         const input = replyToId != null ? $('replyInput-' + replyToId) : $('commentInput');
         const content = (input && input.value ? input.value : '').trim();
-        if (!content) { alert('评论内容不能为空'); return; }
+        if (!content) { toast('评论内容不能为空'); return; }
 
-        const posts = getPosts();
-        const post = posts.find(p => p.id === postId);
-        if (!post) return;
-        const cmt = {
-            id: Date.now() + Math.floor(Math.random() * 1000),
-            author: me.username,
-            avatar: me.avatar,
-            content,
-            createdAt: now(),
-            likes: 0,
-            likedBy: [],
-            replies: []
+        showLoading(true);
+
+        const insertData = {
+            post_id: postId,
+            author_id: currentProfile.id,
+            author_username: currentProfile.username,
+            content
         };
-        if (replyToId != null) {
-            const c = (post.comments || []).find(x => x.id === replyToId);
-            if (!c) return;
-            c.replies = c.replies || [];
-            c.replies.push(cmt);
-        } else {
-            post.comments = post.comments || [];
-            post.comments.push(cmt);
-        }
-        savePosts(posts);
-        const gained = grantDailyExp(me.username, 'comment');
+        if (replyToId != null) insertData.parent_id = replyToId;
+
+        const { error } = await supabase.from('comments').insert(insertData);
+        if (error) { toast('评论失败：' + error.message); showLoading(false); return; }
+
+        // 更新帖子评论计数
+        await supabase.rpc('increment_comments_count', { post_id_input: postId });
+
+        const gained = await grantDailyExp(currentProfile.id, 'comment');
         renderDetail(postId);
         updateStats();
         if (gained) toast('评论成功！+' + gained + ' 经验');
+        showLoading(false);
     }
+
     function toggleReply(commentId) {
         const box = $('replyBox-' + commentId);
         if (!box) return;
@@ -638,56 +746,69 @@
     }
 
     // ====== 点赞评论 / 回复 ======
-    function likeComment(postId, commentId, replyId) {
-        const me = currentUser();
-        if (!me) { openModal('loginModal'); return; }
-        const posts = getPosts();
-        const post = posts.find(p => p.id === postId);
-        if (!post) return;
-        const c = (post.comments || []).find(x => x.id === commentId);
-        if (!c) return;
-        let target = c;
-        if (replyId != null) {
-            target = (c.replies || []).find(r => r.id === replyId);
-            if (!target) return;
+    async function likeComment(postId, commentId, replyId) {
+        if (!currentProfile) { openModal('loginModal'); return; }
+        const targetId = replyId || commentId;
+
+        const { data: existing } = await supabase
+            .from('likes')
+            .select('*')
+            .eq('user_id', currentProfile.id)
+            .eq('target_type', 'comment')
+            .eq('target_id', targetId)
+            .maybeSingle();
+
+        if (existing) {
+            await supabase.from('likes').delete().eq('id', existing.id);
+        } else {
+            await supabase.from('likes').insert({
+                user_id: currentProfile.id,
+                target_type: 'comment',
+                target_id: targetId
+            });
         }
-        target.likedBy = target.likedBy || [];
-        const i = target.likedBy.indexOf(me.username);
-        if (i >= 0) { target.likedBy.splice(i, 1); target.likes = (target.likes || 0) - 1; }
-        else { target.likedBy.push(me.username); target.likes = (target.likes || 0) + 1; }
-        savePosts(posts);
         renderDetail(postId);
     }
 
     // ====== 渲染帖子列表 ======
-    let currentPage = 1;
-    const pageSize = 8;
-    let currentCategory = 'all';
-    let filterAuthor = null;
-    let currentDetailId = null;
-
-    function renderPosts(filterCategory) {
+    async function renderPosts(filterCategory) {
         const listEl = $('newsList');
         const emptyEl = $('emptyState');
         const pageEl = $('pagination');
         const bar = $('authorFilterBar');
+        const loadingEl = $('loadingState');
 
-        let posts = getPosts();
+        loadingEl.style.display = 'block';
+        listEl.innerHTML = '';
+
+        let posts = await fetchAllPosts();
 
         const cat = filterCategory !== undefined ? filterCategory : currentCategory;
         if (cat !== 'all') posts = posts.filter(p => p.category === cat);
-        if (filterAuthor) posts = posts.filter(p => p.author === filterAuthor);
+        if (filterAuthor) posts = posts.filter(p => p.author_username === filterAuthor);
 
         const keyword = (($('searchInput')?.value || '') + ($('searchInput2')?.value || '')).trim().toLowerCase();
         if (keyword) {
             posts = posts.filter(p =>
                 p.title.toLowerCase().includes(keyword) ||
                 p.summary.toLowerCase().includes(keyword) ||
-                p.author.toLowerCase().includes(keyword)
+                p.author_username.toLowerCase().includes(keyword)
             );
         }
 
-        posts.sort((a, b) => b.id - a.id);
+        // 获取当前用户点赞列表
+        let myLikePostIds = [];
+        let myLikeCommentIds = [];
+        if (currentProfile) {
+            const { data: myLikes } = await supabase
+                .from('likes')
+                .select('target_type, target_id')
+                .eq('user_id', currentProfile.id);
+            if (myLikes) {
+                myLikePostIds = myLikes.filter(l => l.target_type === 'post').map(l => l.target_id);
+                myLikeCommentIds = myLikes.filter(l => l.target_type === 'comment').map(l => l.target_id);
+            }
+        }
 
         const total = posts.length;
         const totalPages = Math.ceil(total / pageSize) || 1;
@@ -699,6 +820,8 @@
         if (filterAuthor) { bar.style.display = 'flex'; $('authorFilterName').textContent = '@' + filterAuthor; }
         else bar.style.display = 'none';
 
+        loadingEl.style.display = 'none';
+
         if (total === 0) {
             listEl.innerHTML = '';
             emptyEl.style.display = 'block';
@@ -707,44 +830,52 @@
         }
         emptyEl.style.display = 'none';
 
-        const me = currentUser();
         listEl.innerHTML = pagePosts.map(post => {
-            const liked = (post.likedBy || []).includes(me ? me.username : '');
+            const liked = myLikePostIds.includes(post.id);
             const tagHtml = post.tag ? `<span class="card-badge ${getBadgeClass(post.tag)}">${getBadgeText(post.tag)}</span>` : '';
             const tagLabelHtml = post.tag ? `<span class="tag ${getTagClass(post.tag)}">${getTagLabel(post.tag)}</span>` : '';
-            const canDelete = me && (me.username === post.author || me.isAdmin);
+            const canDelete = currentProfile && (post.author_username === currentProfile.username || currentProfile.isAdmin);
             const delBtn = canDelete
-                ? `<button class="btn-delete" onclick="deletePost(${post.id})" title="删除">🗑️</button>`
+                ? `<button class="btn-delete" onclick="deletePost('${post.id}')" title="删除">🗑️</button>`
                 : '';
 
             return `
             <article class="news-card ${post.tag === 'top' ? 'featured' : ''}">
                 <div class="card-left">
                     ${tagHtml}
-                    <div class="card-avatar">${escapeHtml(post.authorAvatar)}</div>
+                    <div class="card-avatar">${escapeHtml(post.author_avatar || getInitial(post.author_username))}</div>
                 </div>
                 <div class="card-body">
                     <div class="card-tags">
                         <span class="tag ${getCatClass(post.category)}">${escapeHtml(post.category)}</span>
                         ${tagLabelHtml}
                     </div>
-                    <h2 class="card-title"><a href="#" onclick="showDetail(${post.id});return false;">${escapeHtml(post.title)}</a></h2>
+                    <h2 class="card-title"><a href="#" onclick="showDetail('${post.id}');return false;">${escapeHtml(post.title)}</a></h2>
                     <p class="card-summary">${escapeHtml(post.summary)}</p>
                     <div class="card-meta">
-                        <span class="meta-item clickable" onclick="openProfile('${escapeHtml(post.author)}')">👤 ${escapeHtml(post.author)}</span>
-                        <span class="meta-item">🕐 ${escapeHtml(post.createdAt)}</span>
-                        <span class="meta-item">💬 ${commentCount(post)}</span>
+                        <span class="meta-item clickable" onclick="openProfile('${escapeHtml(post.author_username)}')">👤 ${escapeHtml(post.author_username)}</span>
+                        <span class="meta-item">🕐 ${formatTime(post.created_at)}</span>
+                        <span class="meta-item">💬 ${post.comments_count || 0}</span>
                         <span class="meta-item">👁 ${post.views || 0}</span>
                     </div>
                 </div>
                 <div class="card-right">
-                    <button class="card-like ${liked ? 'liked' : ''}" onclick="likePost(${post.id});event.stopPropagation();" title="点赞">👍<span>${post.likes || 0}</span></button>
+                    <button class="card-like ${liked ? 'liked' : ''}" onclick="likePost('${post.id}');event.stopPropagation();" title="点赞">👍<span>${post.likes_count || 0}</span></button>
                     ${delBtn}
                 </div>
             </article>`;
         }).join('');
 
         pageEl.innerHTML = renderPagination(currentPage, totalPages);
+    }
+
+    // 格式化时间
+    function formatTime(isoStr) {
+        if (!isoStr) return '-';
+        try {
+            const d = new Date(isoStr);
+            return d.toLocaleString('zh-CN', { hour12: false });
+        } catch { return isoStr; }
     }
 
     // ====== 分页器 ======
@@ -796,103 +927,146 @@
 
     // ====== 帖子详情 ======
     function showDetail(id) { renderDetail(id); }
-    function renderDetail(id) {
-        const posts = getPosts();
-        const post = posts.find(p => p.id === id);
-        if (!post) return;
+
+    async function renderDetail(id) {
+        const { data: post, error } = await supabase
+            .from('posts')
+            .select('*')
+            .eq('id', id)
+            .single();
+        if (!post) { toast('帖子不存在'); return; }
         currentDetailId = id;
 
-        const me = currentUser();
-        const liked = (post.likedBy || []).includes(me ? me.username : '');
+        // 增加浏览量
+        await supabase.from('posts').update({ views: (post.views || 0) + 1 }).eq('id', id);
+        post.views = (post.views || 0) + 1;
+
+        // 当前用户是否点赞
+        let liked = false;
+        if (currentProfile) {
+            const { data: lk } = await supabase
+                .from('likes')
+                .select('*')
+                .eq('user_id', currentProfile.id)
+                .eq('target_type', 'post')
+                .eq('target_id', id)
+                .maybeSingle();
+            liked = !!lk;
+        }
+
+        // 获取评论
+        const comments = await fetchComments(id);
+
+        // 获取我的点赞评论ID列表
+        let myLikedCommentIds = [];
+        if (currentProfile) {
+            const { data: clks } = await supabase
+                .from('likes')
+                .select('target_id')
+                .eq('user_id', currentProfile.id)
+                .eq('target_type', 'comment');
+            if (clks) myLikedCommentIds = clks.map(l => l.target_id);
+        }
+
+        // 构建评论树
+        const topLevelComments = comments.filter(c => !c.parent_id);
+        const totalComments = comments.length;
 
         $('detailTitle').textContent = post.title;
         $('detailBody').innerHTML = `
             <div class="detail-meta">
                 <span class="tag ${getCatClass(post.category)}">${escapeHtml(post.category)}</span>
                 ${post.tag ? `<span class="tag ${getTagClass(post.tag)}">${getTagLabel(post.tag)}</span>` : ''}
-                <span class="meta-item clickable" onclick="openProfile('${escapeHtml(post.author)}')">👤 ${escapeHtml(post.author)}</span>
-                <span class="meta-item">🕐 ${escapeHtml(post.createdAt)}</span>
+                <span class="meta-item clickable" onclick="openProfile('${escapeHtml(post.author_username)}')">👤 ${escapeHtml(post.author_username)}</span>
+                <span class="meta-item">🕐 ${formatTime(post.created_at)}</span>
                 <span class="meta-item">👁 ${post.views || 0}</span>
             </div>
             <div class="detail-summary">${escapeHtml(post.summary)}</div>
             ${post.content ? `<div class="detail-content">${escapeHtml(post.content).replace(/\n/g, '<br>')}</div>` : ''}
             <div class="like-bar">
-                <button class="like-btn ${liked ? 'liked' : ''}" onclick="likePost(${post.id})">👍 点赞 <b>${post.likes || 0}</b></button>
+                <button class="like-btn ${liked ? 'liked' : ''}" onclick="likePost('${post.id}')">👍 点赞 <b>${post.likes_count || 0}</b></button>
                 <span class="like-hint">${liked ? '已赞，感谢支持' : '觉得不错就点个赞'}</span>
             </div>
             <div class="comment-section">
-                <h3 class="comment-title">💬 评论 <span>${commentCount(post)}</span></h3>
-                <div class="comment-list">${renderComments(post, me)}</div>
+                <h3 class="comment-title">💬 评论 <span>${totalComments}</span></h3>
+                <div class="comment-list">${await renderCommentsHTML(post, topLevelComments, comments, myLikedCommentIds)}</div>
                 <div class="comment-form">
-                    ${me
-                        ? (me.muted
+                    ${currentProfile
+                        ? (currentProfile.muted
                             ? `<div class="comment-locked">🔇 你已被禁言，暂时无法评论</div>`
                             : `<textarea id="commentInput" class="comment-input" placeholder="友善评论，理性发言..."></textarea>
-                               <button class="btn-submit btn-submit-accent" onclick="addComment(${post.id})">发表评论</button>`)
+                               <button class="btn-submit btn-submit-accent" onclick="addComment('${post.id}')">发表评论</button>`)
                         : `<div class="comment-locked">🔐 <a href="#" onclick="openModal('loginModal');return false;">登录</a> 后参与评论</div>`}
                 </div>
             </div>
         `;
         if (!$('detailModal').classList.contains('show')) openModal('detailModal');
-
-        post.views = (post.views || 0) + 1;
-        savePosts(posts);
     }
 
-    function renderComments(post, me) {
-        const list = post.comments || [];
-        if (!list.length) return `<div class="comment-empty">还没有评论，快来抢沙发~</div>`;
-        return list.map(c => {
-            const liked = (c.likedBy || []).includes(me ? me.username : '');
-            const replyHtml = (c.replies || []).map(r => {
-                const rl = (r.likedBy || []).includes(me ? me.username : '');
+    async function renderCommentsHTML(post, topLevelComments, allComments, myLikedIds) {
+        if (!topLevelComments.length) return `<div class="comment-empty">还没有评论，快来抢沙发~</div>`;
+
+        return Promise.all(topLevelComments.map(async c => {
+            const replies = allComments.filter(r => r.parent_id === c.id);
+            const cLiked = myLikedIds.includes(c.id);
+
+            const replyHtml = (replies || []).map(r => {
+                const rLiked = myLikedIds.includes(r.id);
                 return `<div class="reply-item">
-                    <span class="reply-author clickable" onclick="openProfile('${escapeHtml(r.author)}')">${escapeHtml(r.author)}</span>
+                    <span class="reply-author clickable" onclick="openProfile('${escapeHtml(r.author_username)}')">${escapeHtml(r.author_username)}</span>
                     <span class="reply-text">${escapeHtml(r.content)}</span>
                     <span class="reply-meta">
-                        <button class="mini-like ${rl ? 'liked' : ''}" onclick="likeComment(${post.id},${c.id},${r.id})">👍 ${r.likes || 0}</button>
-                        <span class="reply-time">${escapeHtml(r.createdAt)}</span>
+                        <button class="mini-like ${rLiked ? 'liked' : ''}" onclick="likeComment('${post.id}','${r.id}')">👍 ${r.likes_count || 0}</button>
+                        <span class="reply-time">${formatTime(r.created_at)}</span>
                     </span>
                 </div>`;
             }).join('');
+
             return `<div class="comment-item">
-                <div class="comment-avatar">${escapeHtml(c.avatar)}</div>
+                <div class="comment-avatar">${escapeHtml(c.author_avatar || getInitial(c.author_username))}</div>
                 <div class="comment-main">
                     <div class="comment-top">
-                        <span class="comment-author clickable" onclick="openProfile('${escapeHtml(c.author)}')">${escapeHtml(c.author)}</span>
-                        <span class="comment-time">${escapeHtml(c.createdAt)}</span>
+                        <span class="comment-author clickable" onclick="openProfile('${escapeHtml(c.author_username)}')">${escapeHtml(c.author_username)}</span>
+                        <span class="comment-time">${formatTime(c.created_at)}</span>
                     </div>
                     <div class="comment-text">${escapeHtml(c.content)}</div>
                     <div class="comment-actions">
-                        <button class="mini-like ${liked ? 'liked' : ''}" onclick="likeComment(${post.id},${c.id})">👍 ${c.likes || 0}</button>
-                        <button class="mini-reply" onclick="toggleReply(${c.id})">💬 回复</button>
+                        <button class="mini-like ${cLiked ? 'liked' : ''}" onclick="likeComment('${post.id}','${c.id}')">👍 ${c.likes_count || 0}</button>
+                        <button class="mini-reply" onclick="toggleReply('${c.id}')">💬 回复</button>
                     </div>
                     <div class="reply-input" id="replyBox-${c.id}" style="display:none;">
-                        <textarea id="replyInput-${c.id}" class="comment-input" placeholder="回复 @${escapeHtml(c.author)}..."></textarea>
-                        <button class="btn-submit btn-submit-accent" onclick="addComment(${post.id},${c.id})">回复</button>
+                        <textarea id="replyInput-${c.id}" class="comment-input" placeholder="回复 @${escapeHtml(c.author_username)}..."></textarea>
+                        <button class="btn-submit btn-submit-accent" onclick="addComment('${post.id}','${c.id}')">回复</button>
                     </div>
                     <div class="reply-list">${replyHtml}</div>
                 </div>
             </div>`;
-        }).join('');
+        })).then(htmls => htmls.join(''));
     }
 
     // ====== 用户资料 ======
-    function openProfile(username) {
-        const me = currentUser();
+    async function openProfile(username) {
+        const me = currentProfile;
         if (!username) {
             if (!me) { openModal('loginModal'); return; }
             username = me.username;
         }
-        const u = getUser(username);
-        if (!u) { alert('用户不存在'); return; }
+
+        const u = await fetchProfile(username);
+        if (!u) { toast('用户不存在'); return; }
 
         const isSelf = me && me.username === username;
         const isAdminView = me && me.isAdmin && !isSelf;
 
-        const myPosts = getPosts().filter(p => p.author === username).length;
-        const myComments = getPosts().reduce((a, p) =>
-            a + (p.comments || []).reduce((b, c) => b + 1 + ((c.replies || []).length), 0), 0);
+        // 统计发帖和评论数
+        const { count: myPosts } = await supabase
+            .from('posts')
+            .select('*', { count: 'exact', head: true })
+            .eq('author_username', username);
+        const { count: myComments } = await supabase
+            .from('comments')
+            .select('*', { count: 'exact', head: true })
+            .eq('author_username', username);
 
         const exp = u.exp || 0;
         const lv = levelFromExp(exp);
@@ -906,7 +1080,7 @@
 
         $('profileBody').innerHTML = `
             <div class="profile-head">
-                <div class="profile-avatar">${escapeHtml(u.avatar)}</div>
+                <div class="profile-avatar">${escapeHtml(u.avatar || getInitial(u.username))}</div>
                 <div class="profile-id">
                     <div class="profile-name">${escapeHtml(u.username)} ${titleBadge}</div>
                     <div class="profile-level">等级 Lv.${lv} ${u.isAdmin ? '<span class="admin-tag">👑 超级管理员</span>' : ''}</div>
@@ -915,9 +1089,9 @@
             <div class="level-bar"><div class="level-fill" style="width:${pct}%"></div></div>
             <div class="level-exp">经验 ${exp} / 每级 ${EXP_PER_LEVEL}（Lv.${lv} → Lv.${nextLv}）</div>
             <div class="profile-stats">
-                <div><b>${myPosts}</b><span>发帖</span></div>
-                <div><b>${myComments}</b><span>评论</span></div>
-                <div><b>${escapeHtml(u.createdAt || '-')}</b><span>注册于</span></div>
+                <div><b>${myPosts || 0}</b><span>发帖</span></div>
+                <div><b>${myComments || 0}</b><span>评论</span></div>
+                <div><b>${formatTime(u.created_at)}</b><span>注册于</span></div>
             </div>
             <div class="profile-actions" id="profileActions"></div>
         `;
@@ -931,11 +1105,11 @@
             let html = `<button class="btn-profile" onclick="viewUserPosts('${escapeHtml(u.username)}')">📂 查看TA的帖子</button>`;
             if (isAdminView) {
                 html += u.banned
-                    ? `<button class="btn-admin" onclick="unbanUser('${escapeHtml(u.username)}')">🔓 解封账号</button>`
-                    : `<button class="btn-admin danger" onclick="banUser('${escapeHtml(u.username)}')">🔒 封禁账号</button>`;
+                    ? `<button class="btn-admin" onclick="unbanUser('${u.id}')">🔓 解封账号</button>`
+                    : `<button class="btn-admin danger" onclick="banUser('${u.id}')">🔒 封禁账号</button>`;
                 html += u.muted
-                    ? `<button class="btn-admin" onclick="unmuteUser('${escapeHtml(u.username)}')">🔊 解除禁言</button>`
-                    : `<button class="btn-admin warn" onclick="muteUser('${escapeHtml(u.username)}')">🔇 禁言</button>`;
+                    ? `<button class="btn-admin" onclick="unmuteUser('${u.id}')">🔊 解除禁言</button>`
+                    : `<button class="btn-admin warn" onclick="muteUser('${u.id}')">🔇 禁言</button>`;
             }
             acts.innerHTML = html;
         }
@@ -961,64 +1135,102 @@
         $('redeemSuccess').style.display = 'none';
         openModal('redeemModal');
     }
-    function doRedeem() {
-        const me = currentUser();
-        if (!me) { openModal('loginModal'); return; }
+
+    async function doRedeem() {
+        if (!currentProfile) { openModal('loginModal'); return; }
         const code = ($('redeemCode').value || '').trim().toUpperCase();
         const err = $('redeemError'), suc = $('redeemSuccess');
         if (!code) { showErr(err, '请输入兑换码'); return; }
-        if (code !== REDEEM_CODE) { showErr(err, '兑换码无效'); return; }
-        const used = JSON.parse(localStorage.getItem(KEYS.codesUsed) || '{}');
-        if (used[REDEEM_CODE]) { showErr(err, '该兑换码已被使用'); return; }
 
-        updateUser(me.username, u => { u.exp = (REDEEM_LEVEL - 1) * EXP_PER_LEVEL; });
-        used[REDEEM_CODE] = true;
-        localStorage.setItem(KEYS.codesUsed, JSON.stringify(used));
+        showLoading(true);
 
-        const s = JSON.parse(localStorage.getItem(KEYS.session));
-        if (s) { s.level = levelFromExp((REDEEM_LEVEL - 1) * EXP_PER_LEVEL); localStorage.setItem(KEYS.session, JSON.stringify(s)); }
+        // 查询兑换码
+        const { data: rc, error: rcErr } = await supabase
+            .from('redeem_codes')
+            .select('*')
+            .eq('code', code)
+            .single();
 
-        showSuc(suc, '兑换成功！已直升 Lv.' + REDEEM_LEVEL + ' 🎉');
+        if (rcErr || !rc) { showErr(err, '兑换码无效'); showLoading(false); return; }
+        if (rc.use_count >= rc.max_uses) { showErr(err, '该兑换码已被使用完'); showLoading(false); return; }
+        if (rc.used_by && rc.used_by.includes(currentProfile.id)) { showErr(err, '你已经使用过此兑换码'); showLoading(false); return; }
+
+        // 执行兑换：直升到目标等级
+        const targetLevel = rc.reward_value || 99;
+        const targetExp = (targetLevel - 1) * EXP_PER_LEVEL;
+
+        // 更新使用记录
+        const newUsedBy = [...(rc.used_by || []), currentProfile.id];
+        await supabase
+            .from('redeem_codes')
+            .update({ use_count: rc.use_count + 1, used_by: newUsedBy })
+            .eq('code', code);
+
+        // 更新用户等级
+        await supabase
+            .from('profiles')
+            .update({ exp: targetExp })
+            .eq('id', currentProfile.id);
+
+        // 刷新本地
+        currentProfile.exp = targetExp;
+
+        showSuc(suc, '兑换成功！已直升 Lv.' + targetLevel + ' 🎉');
         updateAuthUI();
         setTimeout(() => { closeModal('redeemModal'); openProfile(); }, 1500);
+        showLoading(false);
     }
 
     // ====== 管理员操作 ======
-    function banUser(name) {
-        if (!confirm('确定封禁 ' + name + ' 的账号？该账号将无法登录。')) return;
-        updateUser(name, u => { u.banned = true; });
-        const me = currentUser();
-        if (me && me.username === name) localStorage.removeItem(KEYS.session);
-        alert('已封禁 ' + name);
-        openProfile(name);
-        updateAuthUI();
+    async function banUser(profileId) {
+        if (!confirm('确定封禁该账号？该账号将无法登录。')) return;
+        const { error } = await supabase.from('profiles').update({ banned: true }).eq('id', profileId);
+        if (error) { toast('操作失败：' + error.message); return; }
+        toast('已封禁');
+        // 如果封禁的是自己，强制登出
+        if (currentProfile && currentProfile.id === profileId) await logout();
+        // 刷新被查看的用户资料
+        const { data: u } = await supabase.from('profiles').select('*').eq('id', profileId).single();
+        if (u) { currentProfile = Object.assign(currentProfile || {}, {}); openProfile(u.username); }
     }
-    function unbanUser(name) {
-        updateUser(name, u => { u.banned = false; });
-        alert('已解封 ' + name);
-        openProfile(name);
+
+    async function unbanUser(profileId) {
+        const { error } = await supabase.from('profiles').update({ banned: false }).eq('id', profileId);
+        if (error) { toast('操作失败：' + error.message); return; }
+        toast('已解封');
+        const { data: u } = await supabase.from('profiles').select('*').eq('id', profileId).single();
+        if (u) openProfile(u.username);
     }
-    function muteUser(name) {
-        if (!confirm('确定禁言 ' + name + '？该用户将无法发帖/评论。')) return;
-        updateUser(name, u => { u.muted = true; });
-        alert('已禁言 ' + name);
-        openProfile(name);
+
+    async function muteUser(profileId) {
+        if (!confirm('确定禁言该用户？')) return;
+        const { error } = await supabase.from('profiles').update({ muted: true }).eq('id', profileId);
+        if (error) { toast('操作失败：' + error.message); return; }
+        toast('已禁言');
+        const { data: u } = await supabase.from('profiles').select('*').eq('id', profileId).single();
+        if (u) openProfile(u.username);
     }
-    function unmuteUser(name) {
-        updateUser(name, u => { u.muted = false; });
-        alert('已解除禁言 ' + name);
-        openProfile(name);
+
+    async function unmuteUser(profileId) {
+        const { error } = await supabase.from('profiles').update({ muted: false }).eq('id', profileId);
+        if (error) { toast('操作失败：' + error.message); return; }
+        toast('已解除禁言');
+        const { data: u } = await supabase.from('profiles').select('*').eq('id', profileId).single();
+        if (u) openProfile(u.username);
     }
 
     // ====== 统计更新 ======
-    function updateStats() {
-        const users = getUsers();
-        const posts = getPosts();
-        const todayStr = today();
-        const todayCount = posts.filter(p => (p.createdAt || '').includes(todayStr)).length;
-        $('statUsers').textContent = users.length;
-        $('statPosts').textContent = posts.length;
-        $('statToday').textContent = todayCount;
+    async function updateStats() {
+        try {
+            const stats = await fetchStats();
+            $('statUsers').textContent = stats.users;
+            $('statPosts').textContent = stats.posts;
+            $('statToday').textContent = stats.today;
+        } catch (e) {
+            $('statUsers').textContent = '-';
+            $('statPosts').textContent = '-';
+            $('statToday').textContent = '-';
+        }
     }
 
     // ====== 标签样式映射 ======
@@ -1060,58 +1272,67 @@
     }
     function scrollToTop() { window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
-    // ====== 初始化（含管理员与示例帖子播种） ======
-    function seedData() {
-        let users = getUsers();
-        if (!users.find(u => u.username === ADMIN_USER)) {
-            users.push({
-                username: ADMIN_USER,
-                email: ADMIN_USER + '@leaveh.local',
-                password: 'admin2026',
-                avatar: getInitial(ADMIN_USER),
-                createdAt: now(),
-                level: REDEEM_LEVEL,
-                exp: (REDEEM_LEVEL - 1) * EXP_PER_LEVEL,
-                title: ADMIN_TITLE,
-                isAdmin: true,
-                banned: false,
-                muted: false
-            });
-            saveUsers(users);
-        }
-        if (getPosts().length === 0) {
-            const seed = [{
-                id: Date.now(),
-                title: '欢迎来到 Leaveh 每日新闻！',
-                category: '公告',
-                tag: 'top',
-                summary: '这里是最新资讯与社区动态发布平台。注册账号后即可发帖、评论、点赞，体验完整社区功能。',
-                content: '【Leaveh 每日新闻】\n\n本平台支持：\n· 注册 / 登录账号\n· 自由发布新闻帖子\n· 评论、回复、点赞帖子与评论\n· 账号等级与经验系统（每日首评+10、首发帖+20）\n· 超级管理员后台（封禁 / 禁言 / 删帖）\n\n祝大家使用愉快！',
-                author: ADMIN_USER,
-                authorAvatar: getInitial(ADMIN_USER),
-                createdAt: now(),
-                views: 128,
-                likes: 0,
-                likedBy: [],
-                comments: []
-            }];
-            savePosts(seed);
-        }
+    // ====== Loading 状态 ======
+    function showLoading(show) {
+        const el = $('loadingState');
+        if (el) el.style.display = show ? 'block' : 'none';
     }
 
-    (function init() {
-        seedData();
-        updateAuthUI();
-        renderPosts();
+    // ====== 初始化 ======
+    async function init() {
+        // 检查 Supabase 配置是否有效
+        if (SUPABASE_URL === 'YOUR_SUPABASE_URL' || SUPABASE_ANON_KEY === 'YOUR_SUPABASE_ANON_KEY') {
+            document.body.innerHTML = `
+                <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#E8EEF5;font-family:sans-serif;text-align:center;padding:40px;">
+                    <div>
+                        <div style="font-size:64px;margin-bottom:20px;">⚙️</div>
+                        <h1 style="font-size:24px;color:#333;margin-bottom:12px;">后端配置待完成</h1>
+                        <p style="color:#666;line-height:1.8;max-width:500px;">
+                            请先在 <b>index.html</b> 中配置 Supabase 连接信息：<br><br>
+                            <code style="background:#F0F2F5;padding:4px 8px;border-radius:4px;font-size:13px;">
+                                SUPABASE_URL = 'https://xxxx.supabase.co'<br>
+                                SUPABASE_ANON_KEY = 'eyJ...'
+                            </code><br><br>
+                            同时需要在 Supabase SQL Editor 中执行 <code>supabase_schema.sql</code> 建表。<br><br>
+                            <a href="https://supabase.com" target="_blank" style="color:#4A90D9;">→ 前往 Supabase 创建免费项目</a>
+                        </p>
+                    </div>
+                `;
+            return;
+        }
 
+        // 监听认证状态变化
+        supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+                updateAuthUI();
+                renderPosts();
+            } else if (event === 'SIGNED_OUT') {
+                currentProfile = null;
+                updateAuthUI();
+                renderPosts();
+            }
+        });
+
+        // 初始化 UI
+        await updateAuthUI();
+        await renderPosts();
+
+        // ESC 关闭所有模态框
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') {
                 ['loginModal', 'registerModal', 'postModal', 'detailModal', 'profileModal', 'redeemModal'].forEach(id => {
-                    if ($(id).classList.contains('show')) closeModal(id);
+                    if ($(id) && $(id).classList.contains('show')) closeModal(id);
                 });
             }
         });
-    })();
+    }
+
+    // 启动
+    init();
     </script>
+    <style>
+        /* 加载动画 */
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    </style>
 </body>
 </html>

@@ -458,3 +458,7 @@ input, select, textarea, button { font-family: inherit; font-size: inherit; }
     box-shadow: 0 8px 24px rgba(0,0,0,.25);
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 加载状态 */
+.loading-state { text-align:center; padding:40px; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
