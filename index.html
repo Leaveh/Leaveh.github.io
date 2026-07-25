@@ -5,10 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Leaveh 每日新闻</title>
     <link rel="stylesheet" href="style.css">
-    <!-- Supabase JS SDK（多 CDN 容错：优先 fastly 镜像以适配国内网络） -->
-    <script src="https://fastly.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script>window.supabase||document.write('<script src="https://unpkg.com/@supabase/supabase-js@2"><\/script>');</script>
-    <script>window.supabase||document.write('<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"><\/script>');</script>
+    <!-- 无外部依赖：使用原生 fetch 直连 Supabase REST/Auth API -->
+    <!-- 不再需要 supabase-js SDK -->
 </head>
 <body>
 
@@ -301,17 +299,113 @@
 
     <!-- ==================== JavaScript (Supabase 后端版) ==================== -->
     <script>
-    // ====== Supabase 配置（替换为你的项目信息） ======
+    // ====== Supabase 配置（原生 fetch 客户端，零外部依赖） ======
     const SUPABASE_URL = 'https://lbhexlnrbcjvkjoonbnp.supabase.co';
     const SUPABASE_ANON_KEY = 'sb_publishable_8j82KMSFtrXS_R1Qhqan9A_KBuUH2wf';
-    let supabase = null;
-    try {
-        if (window.supabase) {
-            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        }
-    } catch (e) {
-        console.error('Supabase 初始化失败:', e);
+    const REST_URL = SUPABASE_URL + '/rest/v1';
+    const AUTH_URL = SUPABASE_URL + '/auth/v1';
+
+    // ---- 最小 Supabase 客户端（fetch 实现，兼容 supabase-js 接口）----
+    function _headers(token) {
+        const h = {
+            'apikey': SUPABASE_ANON_KEY,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+        };
+        if (token) h['Authorization'] = 'Bearer ' + token;
+        return h;
     }
+    function _getToken() { return localStorage.getItem('leaveh_sb_token') || ''; }
+    function _setToken(t) { if (t) localStorage.setItem('leaveh_sb_token', t); else localStorage.removeItem('leaveh_sb_token'); }
+
+    const sbTable = (table) => ({
+        select: (columns='*', opts={}) => ({
+            eq: (col, val) => _req(REST_URL+'/'+table+'?select='+encodeURIComponent(columns)+'&'+col+'=eq.'+encodeURIComponent(String(val)), _getToken(), opts),
+            single: () => _req(REST_URL+'/'+table+'?select='+encodeURIComponent(columns), _getToken(), Object.assign({},opts,{single:true}))
+        }),
+        insert: (data) => _req(REST_URL+'/'+table, _getToken(), { method:'POST', body: JSON.stringify(data) }),
+        update: (data) => ({
+            eq: (col, val) => _req(REST_URL+'/'+table+'?'+col+'=eq.'+encodeURIComponent(String(val)), _getToken(), { method:'PATCH', body: JSON.stringify(data) })
+        }),
+        delete: () => ({
+            eq: (col, val) => _req(REST_URL+'/'+table+'?'+col+'=eq.'+encodeURIComponent(String(val)), _getToken(), { method:'DELETE' })
+        })
+    });
+    function _req(url, token, opts={}) {
+        const isHead = url.includes('head=true');
+        const prefer = isHead ? 'count=exact' : (opts.method ? 'return=representation,return=minimal' : '');
+        return fetch(url, {
+            method: opts.method || 'GET',
+            headers: _headers(token),
+            body: opts.body || undefined
+        }).then(async r => {
+            if (r.ok && isHead) return { data: { count: parseInt(r.headers.get('content-range')?.split('/')[1]||0), data:[] }, error: null };
+            if (!r.ok && r.status !== 406) {
+                let e; try { e = await r.json(); } catch(ee) { e = {message:r.statusText}; }
+                return { data: null, error: e };
+            }
+            if (r.status === 406 && opts.single) return { data: null, error: { message: 'No rows returned' } };
+            if (opts.single) {
+                try { const d = await r.json(); return Array.isArray(d) ? { data: d[0]||null, error:null } : { data:d, error:null }; }
+                catch(e) { return { data:null, error:e }; }
+            }
+            try { const d = await r.json(); return { data:d, error:null }; }
+            catch(e) { return { data:null, error:e }; }
+        });
+    }
+    const supabase = {
+        from: sbTable,
+        rpc: (fn, params={}) => {
+            const body = {};
+            for (const k in params) body[k] = params[k];
+            return _req(REST_URL+'/rpc/'+fn, _getToken(), { method:'POST', body:JSON.stringify(body) });
+        },
+        auth: {
+            getSession: async () => {
+                const t = _getToken();
+                if (!t) return { data:{ session:null }, error:null };
+                try {
+                    const r = await fetch(AUTH_URL+'/user', { headers:_headers(t) });
+                    if (!r.ok) { _setToken(null); return { data:{ session:null }, error:null }; }
+                    const u = await r.json();
+                    return { data:{ session:{ user:u, access_token:t } }, error:null };
+                } catch(e) { return { data:{ session:null }, error:e }; }
+            },
+            signUp: async ({email,password,options={}}) => {
+                try {
+                    const r = await fetch(AUTH_URL+'/signup', {
+                        method:'POST', headers:_headers(), body:JSON.stringify({email,password,data:options.data||{}})
+                    });
+                    const d = await r.json();
+                    if (!r.ok) return { data:{ user:null }, error: d };
+                    return { data:{ user:d.user||d }, error:null };
+                } catch(e) { return { data:{ user:null }, error:{message:String(e)} }; }
+            },
+            signInWithPassword: async ({email,password}) => {
+                try {
+                    const r = await fetch(AUTH_URL+'/token?grant_type=password', {
+                        method:'POST', headers:_headers(), body:JSON.stringify({email,password})
+                    });
+                    const d = await r.json();
+                    if (!r.ok) return { data:{ user:null, session:null }, error: d };
+                    _setToken(d.access_token);
+                    return { data:{ user:d.user, session:d }, error:null };
+                } catch(e) { return { data:{ user:null, session:null }, error:{message:String(e)} }; }
+            },
+            signOut: async () => {
+                const t = _getToken(); _setToken(null);
+                if (t) { try { await fetch(AUTH_URL+'/logout',{method:'POST',headers:_headers(t)}); }catch(e){} }
+                return { error:null };
+            },
+            onAuthStateChange: (callback) => {
+                window.addEventListener('storage', (e) => {
+                    if (e.key === 'leaveh_sb_token') callback(e.newValue ? 'SIGNED_IN' : 'SIGNED_OUT', e.newValue ? {user:{},access_token:e.newValue}:null);
+                });
+                // 立即执行一次检查
+                (async()=>{ const s=(await supabase.auth.getSession()).data.session; callback(s?'SIGNED_IN':'SIGNED_OUT',s); })();
+            }
+        }
+    };
 
     // ====== 常量配置 ======
     const EXP_PER_LEVEL = 100;
@@ -1300,23 +1394,13 @@
                             请先在 <b>index.html</b> 中配置 Supabase 连接信息：<br><br>
                             <code style="background:#F0F2F5;padding:4px 8px;border-radius:4px;font-size:13px;">
                                 SUPABASE_URL = 'https://xxxx.supabase.co'<br>
-                                SUPABASE_ANON_KEY = 'eyJ...'
+                                SUPABASE_ANON_KEY = 'sb_publishable_...'
                             </code><br><br>
                             同时需要在 Supabase SQL Editor 中执行 <code>supabase_schema.sql</code> 建表。<br><br>
                             <a href="https://supabase.com" target="_blank" style="color:#4A90D9;">→ 前往 Supabase 创建免费项目</a>
                         </p>
                     </div>
                 `;
-            return;
-        }
-
-        // 检查 Supabase SDK 是否加载成功
-        if (!supabase) {
-            document.body.insertAdjacentHTML('afterbegin', `
-                <div style="background:#f8d7da;color:#721c24;padding:14px 20px;text-align:center;font-family:sans-serif;font-size:14px;position:relative;z-index:9999;">
-                    ⚠️ Supabase 脚本加载失败（可能是网络/CDN 被拦截）。请检查网络后强制刷新（Ctrl+F5）。
-                    若国内访问困难，可改用本地自托管版本。
-                </div>`);
             return;
         }
 
