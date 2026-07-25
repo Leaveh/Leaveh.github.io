@@ -318,22 +318,41 @@
     function _getToken() { return localStorage.getItem('leaveh_sb_token') || ''; }
     function _setToken(t) { if (t) localStorage.setItem('leaveh_sb_token', t); else localStorage.removeItem('leaveh_sb_token'); }
 
+    // 查询构建器：支持 .select().eq().order().gte().single/.maybeSingle 链式调用
     const sbTable = (table) => ({
-        select: (columns='*', opts={}) => ({
-            eq: (col, val) => _req(REST_URL+'/'+table+'?select='+encodeURIComponent(columns)+'&'+col+'=eq.'+encodeURIComponent(String(val)), _getToken(), opts),
-            single: () => _req(REST_URL+'/'+table+'?select='+encodeURIComponent(columns), _getToken(), Object.assign({},opts,{single:true}))
-        }),
+        select: (columns='*', opts={}) => {
+            let _url = REST_URL+'/'+table+'?select='+encodeURIComponent(columns);
+            let _opts = opts;
+            const _chain = {
+                eq: (col, val) => { _url += '&'+col+'=eq.'+encodeURIComponent(String(val)); return _chain; },
+                order: (col, dir={ascending:false}) => { _url += '&order='+col+(dir.ascending ? '.asc' : '.desc'); return _chain; },
+                gte: (col, val) => { _url += '&'+col+'=gte.'+encodeURIComponent(String(val)); return _chain; },
+                lt: (col, val) => { _url += '&'+col+'=lt.'+encodeURIComponent(String(val)); return _chain; },
+                neq: (col, val) => { _url += '&'+col+'=neq.'+encodeURIComponent(String(val)); return _chain; },
+                in: (col, vals) => { _url += '&'+col+'=in.('+vals.map(v=>encodeURIComponent(String(v))).join(','); return _chain; },
+                single: () => _req(_url, _getToken(), Object.assign({},_opts,{single:true})),
+                maybeSingle: () => _req(_url, _getToken(), Object.assign({},_opts,{maybeSingle:true}))
+            };
+            return _chain;
+        },
         insert: (data) => _req(REST_URL+'/'+table, _getToken(), { method:'POST', body: JSON.stringify(data) }),
-        update: (data) => ({
-            eq: (col, val) => _req(REST_URL+'/'+table+'?'+col+'=eq.'+encodeURIComponent(String(val)), _getToken(), { method:'PATCH', body: JSON.stringify(data) })
-        }),
-        delete: () => ({
-            eq: (col, val) => _req(REST_URL+'/'+table+'?'+col+'=eq.'+encodeURIComponent(String(val)), _getToken(), { method:'DELETE' })
-        })
+        update: (data) => {
+            let _u = REST_URL+'/'+table;
+            const _uchain = {
+                eq: (col, val) => { _u += '?'+col+'=eq.'+encodeURIComponent(String(val)); return _req(_u, _getToken(), { method:'PATCH', body: JSON.stringify(data) }); }
+            };
+            return _uchain;
+        },
+        delete: () => {
+            let _d = REST_URL+'/'+table;
+            const _dchain = {
+                eq: (col, val) => { _d += '?'+col+'=eq.'+encodeURIComponent(String(val)); return _req(_d, _getToken(), { method:'DELETE' }); }
+            };
+            return _dchain;
+        }
     });
     function _req(url, token, opts={}) {
         const isHead = url.includes('head=true');
-        const prefer = isHead ? 'count=exact' : (opts.method ? 'return=representation,return=minimal' : '');
         return fetch(url, {
             method: opts.method || 'GET',
             headers: _headers(token),
@@ -345,7 +364,8 @@
                 return { data: null, error: e };
             }
             if (r.status === 406 && opts.single) return { data: null, error: { message: 'No rows returned' } };
-            if (opts.single) {
+            if (r.status === 406 && opts.maybeSingle) return { data: null, error: null };  // maybeSingle: 空结果不算错误
+            if (opts.single || opts.maybeSingle) {
                 try { const d = await r.json(); return Array.isArray(d) ? { data: d[0]||null, error:null } : { data:d, error:null }; }
                 catch(e) { return { data:null, error:e }; }
             }
