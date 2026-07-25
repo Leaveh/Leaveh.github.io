@@ -37,7 +37,7 @@
                         <input type="text" placeholder="搜索新闻..." class="search-input" id="searchInput2" onkeyup="handleSearch(event)">
                         <button class="search-btn" onclick="handleSearch({key:'Enter'})">🔍</button>
                     </div>
-                    <div class="user-info-nav">
+                    <div class="user-info-nav" onclick="openProfile()" title="查看我的资料">
                         <span class="user-avatar-nav" id="navAvatar">👤</span>
                         <span class="user-name-nav" id="navUsername"></span>
                     </div>
@@ -77,6 +77,12 @@
                 <button class="tab" data-category="服务器" onclick="switchTab(this, '服务器')">服务器</button>
                 <button class="tab" data-category="活动" onclick="switchTab(this, '活动')">活动</button>
                 <button class="tab" data-category="技术" onclick="switchTab(this, '技术')">技术</button>
+            </div>
+
+            <!-- 作者筛选条 -->
+            <div class="author-filter" id="authorFilterBar" style="display:none;">
+                正在查看 <b id="authorFilterName"></b> 的帖子
+                <button class="clear-filter" onclick="clearAuthorFilter()">清除筛选 ✕</button>
             </div>
 
             <!-- 新闻列表（JS 动态渲染） -->
@@ -245,6 +251,36 @@
         </div>
     </div>
 
+    <!-- ==================== 用户资料模态框 ==================== -->
+    <div class="modal-overlay" id="profileModal" onclick="closeModalOnOverlay(event, 'profileModal')">
+        <div class="modal modal-lg" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h2>👤 用户资料</h2>
+                <button class="modal-close" onclick="closeModal('profileModal')">×</button>
+            </div>
+            <div id="profileBody"></div>
+        </div>
+    </div>
+
+    <!-- ==================== 兑换中心模态框 ==================== -->
+    <div class="modal-overlay" id="redeemModal" onclick="closeModalOnOverlay(event, 'redeemModal')">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h2>🎁 兑换中心</h2>
+                <button class="modal-close" onclick="closeModal('redeemModal')">×</button>
+            </div>
+            <div class="auth-form">
+                <p class="redeem-tip">输入兑换码即可解锁专属奖励</p>
+                <div class="form-group">
+                    <input type="text" id="redeemCode" placeholder="例如 LEAVEH-99VIP-XXXX" style="text-transform:uppercase;">
+                </div>
+                <div class="form-error" id="redeemError" style="display:none;"></div>
+                <div class="form-success" id="redeemSuccess" style="display:none;"></div>
+                <button class="btn-submit btn-submit-accent" onclick="doRedeem()">立即兑换</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 页脚 -->
     <footer class="footer">
         <div class="footer-inner">
@@ -260,27 +296,112 @@
         users: 'leaveh_users',
         posts: 'leaveh_posts',
         session: 'leaveh_session',
-        currentFilter: 'leaveh_filter'
+        daily: 'leaveh_daily',
+        codesUsed: 'leaveh_codes_used'
     };
+
+    // ====== 常量配置 ======
+    const EXP_PER_LEVEL = 100;          // 每级所需经验（线性）
+    const MAX_LEVEL = 100;              // 满级
+    const ADMIN_USER = 'chenjunlongsb1';
+    const ADMIN_TITLE = '民间Wiki';
+    const REDEEM_CODE = 'LEAVEH-99VIP-7H3X9M';  // 仅可用一次的直升99级兑换码
+    const REDEEM_LEVEL = 99;
 
     // ====== 工具函数 ======
     function $(id) { return document.getElementById(id); }
     function now() { return new Date().toLocaleString('zh-CN', { hour12: false }); }
     function today() { return new Date().toLocaleDateString('zh-CN'); }
+    function todayKey() {
+        const d = new Date();
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
     function escapeHtml(str) {
         const div = document.createElement('div');
-        div.textContent = str;
+        div.textContent = str == null ? '' : str;
         return div.innerHTML;
     }
     function getInitial(name) {
         return name ? name.charAt(0).toUpperCase() : '?';
     }
 
+    // ====== 等级系统 ======
+    function levelFromExp(exp) {
+        const lv = Math.floor((exp || 0) / EXP_PER_LEVEL) + 1;
+        return Math.min(lv, MAX_LEVEL);
+    }
+    function expInLevel(exp) {
+        const lv = levelFromExp(exp);
+        if (lv >= MAX_LEVEL) return EXP_PER_LEVEL;
+        const base = (lv - 1) * EXP_PER_LEVEL;
+        return Math.min((exp || 0) - base, EXP_PER_LEVEL);
+    }
+
+    // ====== 数据访问（带结构迁移） ======
+    function getUsers() { return JSON.parse(localStorage.getItem(KEYS.users) || '[]'); }
+    function saveUsers(arr) { localStorage.setItem(KEYS.users, JSON.stringify(arr)); }
+    function getUser(name) { return getUsers().find(u => u.username === name) || null; }
+    function updateUser(name, fn) {
+        const users = getUsers();
+        const u = users.find(x => x.username === name);
+        if (!u) return null;
+        fn(u);
+        saveUsers(users);
+        return u;
+    }
+    function getPosts() {
+        const posts = JSON.parse(localStorage.getItem(KEYS.posts) || '[]');
+        posts.forEach(p => {
+            if (!p.comments) p.comments = [];
+            if (p.likes == null) p.likes = 0;
+            if (!p.likedBy) p.likedBy = [];
+            (p.comments || []).forEach(c => {
+                if (!c.replies) c.replies = [];
+                if (c.likes == null) c.likes = 0;
+                if (!c.likedBy) c.likedBy = [];
+                (c.replies || []).forEach(r => {
+                    if (r.likes == null) r.likes = 0;
+                    if (!r.likedBy) r.likedBy = [];
+                });
+            });
+        });
+        return posts;
+    }
+    function savePosts(arr) { localStorage.setItem(KEYS.posts, JSON.stringify(arr)); }
+
+    // 当前登录用户（返回完整对象，含 isAdmin/banned/muted/level/exp）
+    function currentUser() {
+        const s = JSON.parse(localStorage.getItem(KEYS.session));
+        if (!s) return null;
+        return getUser(s.username);
+    }
+
+    // ====== 经验 / 每日奖励 ======
+    function addExp(username, amount) {
+        updateUser(username, u => { u.exp = (u.exp || 0) + amount; });
+        const s = JSON.parse(localStorage.getItem(KEYS.session));
+        if (s && s.username === username) {
+            const u = getUser(username);
+            s.level = levelFromExp(u.exp);
+            localStorage.setItem(KEYS.session, JSON.stringify(s));
+        }
+    }
+    function grantDailyExp(username, type) {
+        const daily = JSON.parse(localStorage.getItem(KEYS.daily) || '{}');
+        const t = daily[username] || {};
+        if (t[type] === todayKey()) return 0;   // 今天已领过
+        t[type] = todayKey();
+        daily[username] = t;
+        localStorage.setItem(KEYS.daily, JSON.stringify(daily));
+        const amount = type === 'comment' ? 10 : 20;
+        addExp(username, amount);
+        return amount;
+    }
+
     // ====== 模态框控制 ======
     function openModal(id) {
         $(id).classList.add('show');
         document.body.style.overflow = 'hidden';
-        // 清空表单错误
         const errEl = $(id).querySelector('.form-error');
         if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
     }
@@ -296,7 +417,7 @@
         setTimeout(() => openModal(toId), 150);
     }
 
-    // ====== 用户系统：注册 ======
+    // ====== 注册 ======
     function handleRegister(e) {
         e.preventDefault();
         const username = $('regUsername').value.trim();
@@ -306,24 +427,28 @@
         const errEl = $('regError');
         const sucEl = $('regSuccess');
 
-        // 校验
         if (password !== confirm) { showErr(errEl, '两次密码不一致'); return; }
         if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) { showErr(errEl, '用户名格式不正确（3-16位字母数字下划线）'); return; }
 
-        // 读已有用户
-        let users = JSON.parse(localStorage.getItem(KEYS.users) || '[]');
+        let users = getUsers();
         if (users.find(u => u.username === username)) { showErr(errEl, '用户名已被注册'); return; }
         if (users.find(u => u.email === email)) { showErr(errEl, '邮箱已被注册'); return; }
 
-        // 存储用户
+        const isAdmin = username === ADMIN_USER;
         users.push({
             username,
             email,
-            password, // 纯前端演示，实际应加密
+            password,
             avatar: getInitial(username),
-            createdAt: now()
+            createdAt: now(),
+            level: 1,
+            exp: 0,
+            title: isAdmin ? ADMIN_TITLE : '',
+            isAdmin: isAdmin,
+            banned: false,
+            muted: false
         });
-        localStorage.setItem(KEYS.users, JSON.stringify(users));
+        saveUsers(users);
 
         showSuc(sucEl, '注册成功！正在跳转登录...');
         setTimeout(() => {
@@ -333,23 +458,23 @@
         }, 1200);
     }
 
-    // ====== 用户系统：登录 ======
+    // ====== 登录 ======
     function handleLogin(e) {
         e.preventDefault();
         const input = $('loginUsername').value.trim();
         const password = $('loginPassword').value;
         const errEl = $('loginError');
 
-        const users = JSON.parse(localStorage.getItem(KEYS.users) || '[]');
+        const users = getUsers();
         const user = users.find(u => (u.username === input || u.email === input) && u.password === password);
-
         if (!user) { showErr(errEl, '用户名/邮箱或密码错误'); return; }
+        if (user.banned) { showErr(errEl, '该账号已被封禁，无法登录'); return; }
 
-        // 存会话
         localStorage.setItem(KEYS.session, JSON.stringify({
             username: user.username,
             email: user.email,
             avatar: user.avatar,
+            level: levelFromExp(user.exp),
             loginAt: now()
         }));
 
@@ -358,7 +483,7 @@
         renderPosts();
     }
 
-    // ====== 用户系统：登出 ======
+    // ====== 登出 ======
     function logout() {
         localStorage.removeItem(KEYS.session);
         updateAuthUI();
@@ -376,7 +501,7 @@
             guestEl.style.display = 'none';
             userEl.style.display = 'flex';
             headerBtn.style.display = 'block';
-            $('navUsername').textContent = session.username;
+            $('navUsername').textContent = session.username + ' · Lv.' + (session.level || 1);
             $('navAvatar').textContent = session.avatar;
         } else {
             guestEl.style.display = 'flex';
@@ -386,11 +511,13 @@
         updateStats();
     }
 
-    // ====== 发帖系统 ======
+    // ====== 发帖 ======
     function handlePostSubmit(e) {
         e.preventDefault();
-        const session = JSON.parse(localStorage.getItem(KEYS.session));
-        if (!session) { openModal('loginModal'); return; }
+        const me = currentUser();
+        if (!me) { openModal('loginModal'); return; }
+        if (me.banned) { alert('账号已被封禁，无法发帖'); return; }
+        if (me.muted) { alert('你已被禁言，无法发帖'); return; }
 
         const title = $('postTitle').value.trim();
         const category = $('postCategory').value;
@@ -401,7 +528,7 @@
 
         if (!title || !category || !summary) { showErr(errEl, '请填写必填项'); return; }
 
-        const posts = JSON.parse(localStorage.getItem(KEYS.posts) || '[]');
+        const posts = getPosts();
         posts.unshift({
             id: Date.now(),
             title,
@@ -409,55 +536,148 @@
             tag,
             summary,
             content,
-            author: session.username,
-            authorAvatar: session.avatar,
+            author: me.username,
+            authorAvatar: me.avatar,
             createdAt: now(),
             views: Math.floor(Math.random() * 100) + 10,
-            replies: 0
+            likes: 0,
+            likedBy: [],
+            comments: []
         });
-        localStorage.setItem(KEYS.posts, JSON.stringify(posts));
+        savePosts(posts);
 
         closeModal('postModal');
         e.target.reset();
+        const gained = grantDailyExp(me.username, 'post');
         renderPosts();
         updateStats();
+        if (gained) toast('发布成功！+' + gained + ' 经验');
     }
 
-    // ====== 删除帖子 ======
+    // ====== 删除帖子（作者本人或管理员） ======
     function deletePost(id) {
+        const me = currentUser();
+        if (!me) { openModal('loginModal'); return; }
         if (!confirm('确定要删除这条新闻吗？')) return;
-        const session = JSON.parse(localStorage.getItem(KEYS.session));
-        if (!session) return;
-
-        let posts = JSON.parse(localStorage.getItem(KEYS.posts) || '[]');
+        let posts = getPosts();
         const post = posts.find(p => p.id === id);
-        if (!post || post.author !== session.username) { alert('只能删除自己发布的新闻'); return; }
+        if (!post) return;
+        if (post.author !== me.username && !me.isAdmin) { alert('你只能删除自己发布的新闻'); return; }
 
         posts = posts.filter(p => p.id !== id);
-        localStorage.setItem(KEYS.posts, JSON.stringify(posts));
+        savePosts(posts);
         renderPosts();
         updateStats();
+        closeModal('detailModal');
+    }
+
+    // ====== 点赞帖子 ======
+    function likePost(id) {
+        const me = currentUser();
+        if (!me) { openModal('loginModal'); return; }
+        const posts = getPosts();
+        const post = posts.find(p => p.id === id);
+        if (!post) return;
+        post.likedBy = post.likedBy || [];
+        const i = post.likedBy.indexOf(me.username);
+        if (i >= 0) { post.likedBy.splice(i, 1); post.likes = (post.likes || 0) - 1; }
+        else { post.likedBy.push(me.username); post.likes = (post.likes || 0) + 1; }
+        savePosts(posts);
+        renderPosts();
+        if ($('detailModal').classList.contains('show') && currentDetailId === id) renderDetail(id);
+    }
+
+    // ====== 评论 / 回复 ======
+    function commentCount(post) {
+        return (post.comments || []).reduce((a, c) => a + 1 + ((c.replies || []).length), 0);
+    }
+    function addComment(postId, replyToId) {
+        const me = currentUser();
+        if (!me) { openModal('loginModal'); return; }
+        if (me.banned) { alert('账号已被封禁，无法评论'); return; }
+        if (me.muted) { alert('你已被禁言，无法评论'); return; }
+
+        const input = replyToId != null ? $('replyInput-' + replyToId) : $('commentInput');
+        const content = (input && input.value ? input.value : '').trim();
+        if (!content) { alert('评论内容不能为空'); return; }
+
+        const posts = getPosts();
+        const post = posts.find(p => p.id === postId);
+        if (!post) return;
+        const cmt = {
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            author: me.username,
+            avatar: me.avatar,
+            content,
+            createdAt: now(),
+            likes: 0,
+            likedBy: [],
+            replies: []
+        };
+        if (replyToId != null) {
+            const c = (post.comments || []).find(x => x.id === replyToId);
+            if (!c) return;
+            c.replies = c.replies || [];
+            c.replies.push(cmt);
+        } else {
+            post.comments = post.comments || [];
+            post.comments.push(cmt);
+        }
+        savePosts(posts);
+        const gained = grantDailyExp(me.username, 'comment');
+        renderDetail(postId);
+        updateStats();
+        if (gained) toast('评论成功！+' + gained + ' 经验');
+    }
+    function toggleReply(commentId) {
+        const box = $('replyBox-' + commentId);
+        if (!box) return;
+        const show = box.style.display === 'none';
+        box.style.display = show ? 'block' : 'none';
+        if (show) { const ta = $('replyInput-' + commentId); if (ta) ta.focus(); }
+    }
+
+    // ====== 点赞评论 / 回复 ======
+    function likeComment(postId, commentId, replyId) {
+        const me = currentUser();
+        if (!me) { openModal('loginModal'); return; }
+        const posts = getPosts();
+        const post = posts.find(p => p.id === postId);
+        if (!post) return;
+        const c = (post.comments || []).find(x => x.id === commentId);
+        if (!c) return;
+        let target = c;
+        if (replyId != null) {
+            target = (c.replies || []).find(r => r.id === replyId);
+            if (!target) return;
+        }
+        target.likedBy = target.likedBy || [];
+        const i = target.likedBy.indexOf(me.username);
+        if (i >= 0) { target.likedBy.splice(i, 1); target.likes = (target.likes || 0) - 1; }
+        else { target.likedBy.push(me.username); target.likes = (target.likes || 0) + 1; }
+        savePosts(posts);
+        renderDetail(postId);
     }
 
     // ====== 渲染帖子列表 ======
     let currentPage = 1;
     const pageSize = 8;
     let currentCategory = 'all';
+    let filterAuthor = null;
+    let currentDetailId = null;
 
     function renderPosts(filterCategory) {
         const listEl = $('newsList');
         const emptyEl = $('emptyState');
         const pageEl = $('pagination');
+        const bar = $('authorFilterBar');
 
-        let posts = JSON.parse(localStorage.getItem(KEYS.posts) || '[]');
+        let posts = getPosts();
 
-        // 分类过滤
         const cat = filterCategory !== undefined ? filterCategory : currentCategory;
-        if (cat !== 'all') {
-            posts = posts.filter(p => p.category === cat);
-        }
+        if (cat !== 'all') posts = posts.filter(p => p.category === cat);
+        if (filterAuthor) posts = posts.filter(p => p.author === filterAuthor);
 
-        // 搜索过滤
         const keyword = (($('searchInput')?.value || '') + ($('searchInput2')?.value || '')).trim().toLowerCase();
         if (keyword) {
             posts = posts.filter(p =>
@@ -467,17 +687,18 @@
             );
         }
 
-        // 排序（最新在前）
         posts.sort((a, b) => b.id - a.id);
 
-        // 分页
         const total = posts.length;
         const totalPages = Math.ceil(total / pageSize) || 1;
         if (currentPage > totalPages) currentPage = totalPages;
         const start = (currentPage - 1) * pageSize;
         const pagePosts = posts.slice(start, start + pageSize);
 
-        // 空状态
+        // 作者筛选条
+        if (filterAuthor) { bar.style.display = 'flex'; $('authorFilterName').textContent = '@' + filterAuthor; }
+        else bar.style.display = 'none';
+
         if (total === 0) {
             listEl.innerHTML = '';
             emptyEl.style.display = 'block';
@@ -486,12 +707,13 @@
         }
         emptyEl.style.display = 'none';
 
-        // 渲染卡片
-        const session = JSON.parse(localStorage.getItem(KEYS.session));
+        const me = currentUser();
         listEl.innerHTML = pagePosts.map(post => {
+            const liked = (post.likedBy || []).includes(me ? me.username : '');
             const tagHtml = post.tag ? `<span class="card-badge ${getBadgeClass(post.tag)}">${getBadgeText(post.tag)}</span>` : '';
             const tagLabelHtml = post.tag ? `<span class="tag ${getTagClass(post.tag)}">${getTagLabel(post.tag)}</span>` : '';
-            const delBtn = (session && session.username === post.author)
+            const canDelete = me && (me.username === post.author || me.isAdmin);
+            const delBtn = canDelete
                 ? `<button class="btn-delete" onclick="deletePost(${post.id})" title="删除">🗑️</button>`
                 : '';
 
@@ -509,21 +731,23 @@
                     <h2 class="card-title"><a href="#" onclick="showDetail(${post.id});return false;">${escapeHtml(post.title)}</a></h2>
                     <p class="card-summary">${escapeHtml(post.summary)}</p>
                     <div class="card-meta">
-                        <span class="meta-item">👤 ${escapeHtml(post.author)}</span>
+                        <span class="meta-item clickable" onclick="openProfile('${escapeHtml(post.author)}')">👤 ${escapeHtml(post.author)}</span>
                         <span class="meta-item">🕐 ${escapeHtml(post.createdAt)}</span>
-                        <span class="meta-item">💬 回复: ${post.replies}</span>
-                        <span class="meta-item">👁 查看: ${post.views}</span>
+                        <span class="meta-item">💬 ${commentCount(post)}</span>
+                        <span class="meta-item">👁 ${post.views || 0}</span>
                     </div>
                 </div>
-                <div class="card-right">${delBtn}</div>
+                <div class="card-right">
+                    <button class="card-like ${liked ? 'liked' : ''}" onclick="likePost(${post.id});event.stopPropagation();" title="点赞">👍<span>${post.likes || 0}</span></button>
+                    ${delBtn}
+                </div>
             </article>`;
         }).join('');
 
-        // 渲染分页
         pageEl.innerHTML = renderPagination(currentPage, totalPages);
     }
 
-    // ====== 分页器渲染 ======
+    // ====== 分页器 ======
     function renderPagination(page, total) {
         if (total <= 1) return '';
         let html = '';
@@ -545,97 +769,344 @@
         el.classList.add('active');
         currentCategory = cat;
         currentPage = 1;
+        filterAuthor = null;
         renderPosts(cat);
     }
     function filterPosts(cat) {
         currentCategory = cat;
         currentPage = 1;
+        filterAuthor = null;
         const tab = document.querySelector(`.tab[data-category="${cat}"]`);
         if (tab) { document.querySelectorAll('.tab').forEach(t => t.classList.remove('active')); tab.classList.add('active'); }
         renderPosts(cat);
+    }
+    function clearAuthorFilter() {
+        filterAuthor = null;
+        currentPage = 1;
+        renderPosts();
     }
 
     // ====== 搜索 ======
     function handleSearch(e) {
         if (e.key && e.key !== 'Enter') return;
         currentPage = 1;
+        filterAuthor = null;
         renderPosts();
     }
 
     // ====== 帖子详情 ======
-    function showDetail(id) {
-        const posts = JSON.parse(localStorage.getItem(KEYS.posts) || '[]');
+    function showDetail(id) { renderDetail(id); }
+    function renderDetail(id) {
+        const posts = getPosts();
         const post = posts.find(p => p.id === id);
         if (!post) return;
+        currentDetailId = id;
+
+        const me = currentUser();
+        const liked = (post.likedBy || []).includes(me ? me.username : '');
 
         $('detailTitle').textContent = post.title;
         $('detailBody').innerHTML = `
             <div class="detail-meta">
                 <span class="tag ${getCatClass(post.category)}">${escapeHtml(post.category)}</span>
                 ${post.tag ? `<span class="tag ${getTagClass(post.tag)}">${getTagLabel(post.tag)}</span>` : ''}
-                <span class="meta-item">👤 ${escapeHtml(post.author)}</span>
+                <span class="meta-item clickable" onclick="openProfile('${escapeHtml(post.author)}')">👤 ${escapeHtml(post.author)}</span>
                 <span class="meta-item">🕐 ${escapeHtml(post.createdAt)}</span>
+                <span class="meta-item">👁 ${post.views || 0}</span>
             </div>
             <div class="detail-summary">${escapeHtml(post.summary)}</div>
             ${post.content ? `<div class="detail-content">${escapeHtml(post.content).replace(/\n/g, '<br>')}</div>` : ''}
+            <div class="like-bar">
+                <button class="like-btn ${liked ? 'liked' : ''}" onclick="likePost(${post.id})">👍 点赞 <b>${post.likes || 0}</b></button>
+                <span class="like-hint">${liked ? '已赞，感谢支持' : '觉得不错就点个赞'}</span>
+            </div>
+            <div class="comment-section">
+                <h3 class="comment-title">💬 评论 <span>${commentCount(post)}</span></h3>
+                <div class="comment-list">${renderComments(post, me)}</div>
+                <div class="comment-form">
+                    ${me
+                        ? (me.muted
+                            ? `<div class="comment-locked">🔇 你已被禁言，暂时无法评论</div>`
+                            : `<textarea id="commentInput" class="comment-input" placeholder="友善评论，理性发言..."></textarea>
+                               <button class="btn-submit btn-submit-accent" onclick="addComment(${post.id})">发表评论</button>`)
+                        : `<div class="comment-locked">🔐 <a href="#" onclick="openModal('loginModal');return false;">登录</a> 后参与评论</div>`}
+                </div>
+            </div>
         `;
-        openModal('detailModal');
+        if (!$('detailModal').classList.contains('show')) openModal('detailModal');
 
-        // 浏览量+1
-        post.views++;
-        localStorage.setItem(KEYS.posts, JSON.stringify(posts));
+        post.views = (post.views || 0) + 1;
+        savePosts(posts);
+    }
+
+    function renderComments(post, me) {
+        const list = post.comments || [];
+        if (!list.length) return `<div class="comment-empty">还没有评论，快来抢沙发~</div>`;
+        return list.map(c => {
+            const liked = (c.likedBy || []).includes(me ? me.username : '');
+            const replyHtml = (c.replies || []).map(r => {
+                const rl = (r.likedBy || []).includes(me ? me.username : '');
+                return `<div class="reply-item">
+                    <span class="reply-author clickable" onclick="openProfile('${escapeHtml(r.author)}')">${escapeHtml(r.author)}</span>
+                    <span class="reply-text">${escapeHtml(r.content)}</span>
+                    <span class="reply-meta">
+                        <button class="mini-like ${rl ? 'liked' : ''}" onclick="likeComment(${post.id},${c.id},${r.id})">👍 ${r.likes || 0}</button>
+                        <span class="reply-time">${escapeHtml(r.createdAt)}</span>
+                    </span>
+                </div>`;
+            }).join('');
+            return `<div class="comment-item">
+                <div class="comment-avatar">${escapeHtml(c.avatar)}</div>
+                <div class="comment-main">
+                    <div class="comment-top">
+                        <span class="comment-author clickable" onclick="openProfile('${escapeHtml(c.author)}')">${escapeHtml(c.author)}</span>
+                        <span class="comment-time">${escapeHtml(c.createdAt)}</span>
+                    </div>
+                    <div class="comment-text">${escapeHtml(c.content)}</div>
+                    <div class="comment-actions">
+                        <button class="mini-like ${liked ? 'liked' : ''}" onclick="likeComment(${post.id},${c.id})">👍 ${c.likes || 0}</button>
+                        <button class="mini-reply" onclick="toggleReply(${c.id})">💬 回复</button>
+                    </div>
+                    <div class="reply-input" id="replyBox-${c.id}" style="display:none;">
+                        <textarea id="replyInput-${c.id}" class="comment-input" placeholder="回复 @${escapeHtml(c.author)}..."></textarea>
+                        <button class="btn-submit btn-submit-accent" onclick="addComment(${post.id},${c.id})">回复</button>
+                    </div>
+                    <div class="reply-list">${replyHtml}</div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    // ====== 用户资料 ======
+    function openProfile(username) {
+        const me = currentUser();
+        if (!username) {
+            if (!me) { openModal('loginModal'); return; }
+            username = me.username;
+        }
+        const u = getUser(username);
+        if (!u) { alert('用户不存在'); return; }
+
+        const isSelf = me && me.username === username;
+        const isAdminView = me && me.isAdmin && !isSelf;
+
+        const myPosts = getPosts().filter(p => p.author === username).length;
+        const myComments = getPosts().reduce((a, p) =>
+            a + (p.comments || []).reduce((b, c) => b + 1 + ((c.replies || []).length), 0), 0);
+
+        const exp = u.exp || 0;
+        const lv = levelFromExp(exp);
+        const inLv = expInLevel(exp);
+        const pct = Math.min(100, Math.round(inLv / EXP_PER_LEVEL * 100));
+        const nextLv = Math.min(lv + 1, MAX_LEVEL);
+
+        const titleBadge = u.title
+            ? `<span class="title-badge">${escapeHtml(u.title)}</span>`
+            : (u.isAdmin ? `<span class="title-badge admin">管理员</span>` : '');
+
+        $('profileBody').innerHTML = `
+            <div class="profile-head">
+                <div class="profile-avatar">${escapeHtml(u.avatar)}</div>
+                <div class="profile-id">
+                    <div class="profile-name">${escapeHtml(u.username)} ${titleBadge}</div>
+                    <div class="profile-level">等级 Lv.${lv} ${u.isAdmin ? '<span class="admin-tag">👑 超级管理员</span>' : ''}</div>
+                </div>
+            </div>
+            <div class="level-bar"><div class="level-fill" style="width:${pct}%"></div></div>
+            <div class="level-exp">经验 ${exp} / 每级 ${EXP_PER_LEVEL}（Lv.${lv} → Lv.${nextLv}）</div>
+            <div class="profile-stats">
+                <div><b>${myPosts}</b><span>发帖</span></div>
+                <div><b>${myComments}</b><span>评论</span></div>
+                <div><b>${escapeHtml(u.createdAt || '-')}</b><span>注册于</span></div>
+            </div>
+            <div class="profile-actions" id="profileActions"></div>
+        `;
+
+        const acts = $('profileActions');
+        if (isSelf) {
+            acts.innerHTML = `
+                <button class="btn-profile" onclick="openRedeem()">🎁 兑换码</button>
+                <button class="btn-profile ghost" onclick="closeModal('profileModal'); openModal('postModal')">✏️ 发帖</button>`;
+        } else {
+            let html = `<button class="btn-profile" onclick="viewUserPosts('${escapeHtml(u.username)}')">📂 查看TA的帖子</button>`;
+            if (isAdminView) {
+                html += u.banned
+                    ? `<button class="btn-admin" onclick="unbanUser('${escapeHtml(u.username)}')">🔓 解封账号</button>`
+                    : `<button class="btn-admin danger" onclick="banUser('${escapeHtml(u.username)}')">🔒 封禁账号</button>`;
+                html += u.muted
+                    ? `<button class="btn-admin" onclick="unmuteUser('${escapeHtml(u.username)}')">🔊 解除禁言</button>`
+                    : `<button class="btn-admin warn" onclick="muteUser('${escapeHtml(u.username)}')">🔇 禁言</button>`;
+            }
+            acts.innerHTML = html;
+        }
+        openModal('profileModal');
+    }
+
+    function viewUserPosts(name) {
+        filterAuthor = name;
+        currentCategory = 'all';
+        currentPage = 1;
+        document.querySelectorAll('.category-tabs .tab').forEach(t => t.classList.remove('active'));
+        const t0 = document.querySelector('.tab[data-category="all"]');
+        if (t0) t0.classList.add('active');
+        closeModal('profileModal');
+        renderPosts();
+    }
+
+    // ====== 兑换 ======
+    function openRedeem() {
+        closeModal('profileModal');
+        $('redeemCode').value = '';
+        $('redeemError').style.display = 'none';
+        $('redeemSuccess').style.display = 'none';
+        openModal('redeemModal');
+    }
+    function doRedeem() {
+        const me = currentUser();
+        if (!me) { openModal('loginModal'); return; }
+        const code = ($('redeemCode').value || '').trim().toUpperCase();
+        const err = $('redeemError'), suc = $('redeemSuccess');
+        if (!code) { showErr(err, '请输入兑换码'); return; }
+        if (code !== REDEEM_CODE) { showErr(err, '兑换码无效'); return; }
+        const used = JSON.parse(localStorage.getItem(KEYS.codesUsed) || '{}');
+        if (used[REDEEM_CODE]) { showErr(err, '该兑换码已被使用'); return; }
+
+        updateUser(me.username, u => { u.exp = (REDEEM_LEVEL - 1) * EXP_PER_LEVEL; });
+        used[REDEEM_CODE] = true;
+        localStorage.setItem(KEYS.codesUsed, JSON.stringify(used));
+
+        const s = JSON.parse(localStorage.getItem(KEYS.session));
+        if (s) { s.level = levelFromExp((REDEEM_LEVEL - 1) * EXP_PER_LEVEL); localStorage.setItem(KEYS.session, JSON.stringify(s)); }
+
+        showSuc(suc, '兑换成功！已直升 Lv.' + REDEEM_LEVEL + ' 🎉');
+        updateAuthUI();
+        setTimeout(() => { closeModal('redeemModal'); openProfile(); }, 1500);
+    }
+
+    // ====== 管理员操作 ======
+    function banUser(name) {
+        if (!confirm('确定封禁 ' + name + ' 的账号？该账号将无法登录。')) return;
+        updateUser(name, u => { u.banned = true; });
+        const me = currentUser();
+        if (me && me.username === name) localStorage.removeItem(KEYS.session);
+        alert('已封禁 ' + name);
+        openProfile(name);
+        updateAuthUI();
+    }
+    function unbanUser(name) {
+        updateUser(name, u => { u.banned = false; });
+        alert('已解封 ' + name);
+        openProfile(name);
+    }
+    function muteUser(name) {
+        if (!confirm('确定禁言 ' + name + '？该用户将无法发帖/评论。')) return;
+        updateUser(name, u => { u.muted = true; });
+        alert('已禁言 ' + name);
+        openProfile(name);
+    }
+    function unmuteUser(name) {
+        updateUser(name, u => { u.muted = false; });
+        alert('已解除禁言 ' + name);
+        openProfile(name);
     }
 
     // ====== 统计更新 ======
     function updateStats() {
-        const users = JSON.parse(localStorage.getItem(KEYS.users) || '[]');
-        const posts = JSON.parse(localStorage.getItem(KEYS.posts) || '[]');
+        const users = getUsers();
+        const posts = getPosts();
         const todayStr = today();
-        const todayCount = posts.filter(p => p.createdAt.includes(todayStr)).length;
-
+        const todayCount = posts.filter(p => (p.createdAt || '').includes(todayStr)).length;
         $('statUsers').textContent = users.length;
         $('statPosts').textContent = posts.length;
         $('statToday').textContent = todayCount;
     }
 
-    // ====== 辅助：样式类映射 ======
+    // ====== 标签样式映射 ======
     function getCatClass(cat) {
-        const map = {'公告':'tag-success','服务器':'tag-warning','活动':'tag-purple','技术':'tag-primary','其他':'tag-info'};
+        const map = { '公告': 'tag-success', '服务器': 'tag-warning', '活动': 'tag-purple', '技术': 'tag-primary', '其他': 'tag-info' };
         return map[cat] || 'tag-info';
     }
     function getTagClass(tag) {
-        const map = {'hot':'tag-danger','urgent':'tag-danger','new':'tag-info','top':'tag-warning'};
+        const map = { 'hot': 'tag-danger', 'urgent': 'tag-danger', 'new': 'tag-info', 'top': 'tag-warning' };
         return map[tag] || '';
     }
     function getTagLabel(tag) {
-        const map = {'hot':'热讯','urgent':'紧急','new':'新鲜','top':'置顶'};
+        const map = { 'hot': '热讯', 'urgent': '紧急', 'new': '新鲜', 'top': '置顶' };
         return map[tag] || tag;
     }
     function getBadgeClass(tag) {
-        const map = {'hot':'hot','urgent':'danger','new':'info','top':'pin'};
+        const map = { 'hot': 'hot', 'urgent': 'danger', 'new': 'info', 'top': 'pin' };
         return map[tag] || '';
     }
     function getBadgeText(tag) {
-        const map = {'hot':'🔥 热讯','urgent':'⚠️ 紧急','new':'✨ 新鲜','top':'📌 置顶'};
+        const map = { 'hot': '🔥 热讯', 'urgent': '⚠️ 紧急', 'new': '✨ 新鲜', 'top': '📌 置顶' };
         return map[tag] || '';
     }
 
-    // ====== 错误/成功提示 ======
+    // ====== 提示 ======
     function showErr(el, msg) { el.textContent = msg; el.style.display = 'block'; }
     function showSuc(el, msg) { el.textContent = msg; el.style.display = 'block'; }
-
-    // ====== 回到顶部 ======
+    function toast(msg) {
+        let t = $('toast');
+        if (!t) {
+            t = document.createElement('div');
+            t.id = 'toast';
+            t.className = 'toast';
+            document.body.appendChild(t);
+        }
+        t.textContent = msg;
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2000);
+    }
     function scrollToTop() { window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
-    // ====== 初始化 ======
+    // ====== 初始化（含管理员与示例帖子播种） ======
+    function seedData() {
+        let users = getUsers();
+        if (!users.find(u => u.username === ADMIN_USER)) {
+            users.push({
+                username: ADMIN_USER,
+                email: ADMIN_USER + '@leaveh.local',
+                password: 'admin2026',
+                avatar: getInitial(ADMIN_USER),
+                createdAt: now(),
+                level: REDEEM_LEVEL,
+                exp: (REDEEM_LEVEL - 1) * EXP_PER_LEVEL,
+                title: ADMIN_TITLE,
+                isAdmin: true,
+                banned: false,
+                muted: false
+            });
+            saveUsers(users);
+        }
+        if (getPosts().length === 0) {
+            const seed = [{
+                id: Date.now(),
+                title: '欢迎来到 Leaveh 每日新闻！',
+                category: '公告',
+                tag: 'top',
+                summary: '这里是最新资讯与社区动态发布平台。注册账号后即可发帖、评论、点赞，体验完整社区功能。',
+                content: '【Leaveh 每日新闻】\n\n本平台支持：\n· 注册 / 登录账号\n· 自由发布新闻帖子\n· 评论、回复、点赞帖子与评论\n· 账号等级与经验系统（每日首评+10、首发帖+20）\n· 超级管理员后台（封禁 / 禁言 / 删帖）\n\n祝大家使用愉快！',
+                author: ADMIN_USER,
+                authorAvatar: getInitial(ADMIN_USER),
+                createdAt: now(),
+                views: 128,
+                likes: 0,
+                likedBy: [],
+                comments: []
+            }];
+            savePosts(seed);
+        }
+    }
+
     (function init() {
+        seedData();
         updateAuthUI();
         renderPosts();
 
-        // ESC 关闭模态框
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') {
-                ['loginModal', 'registerModal', 'postModal', 'detailModal'].forEach(id => {
+                ['loginModal', 'registerModal', 'postModal', 'detailModal', 'profileModal', 'redeemModal'].forEach(id => {
                     if ($(id).classList.contains('show')) closeModal(id);
                 });
             }
