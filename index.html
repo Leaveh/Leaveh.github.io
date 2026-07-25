@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Leaveh 每日新闻</title>
     <link rel="stylesheet" href="style.css">
-    <!-- Supabase JS SDK -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Supabase JS SDK（多 CDN 容错：优先 fastly 镜像以适配国内网络） -->
+    <script src="https://fastly.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>window.supabase||document.write('<script src="https://unpkg.com/@supabase/supabase-js@2"><\/script>');</script>
+    <script>window.supabase||document.write('<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"><\/script>');</script>
 </head>
 <body>
 
@@ -302,7 +304,14 @@
     // ====== Supabase 配置（替换为你的项目信息） ======
     const SUPABASE_URL = 'https://lbhexlnrbcjvkjoonbnp.supabase.co';
     const SUPABASE_ANON_KEY = 'sb_publishable_8j82KMSFtrXS_R1Qhqan9A_KBuUH2wf';
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    let supabase = null;
+    try {
+        if (window.supabase) {
+            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        }
+    } catch (e) {
+        console.error('Supabase 初始化失败:', e);
+    }
 
     // ====== 常量配置 ======
     const EXP_PER_LEVEL = 100;
@@ -1298,6 +1307,16 @@
                         </p>
                     </div>
                 `;
+            return;
+        }
+
+        // 检查 Supabase SDK 是否加载成功
+        if (!supabase) {
+            document.body.insertAdjacentHTML('afterbegin', `
+                <div style="background:#f8d7da;color:#721c24;padding:14px 20px;text-align:center;font-family:sans-serif;font-size:14px;position:relative;z-index:9999;">
+                    ⚠️ Supabase 脚本加载失败（可能是网络/CDN 被拦截）。请检查网络后强制刷新（Ctrl+F5）。
+                    若国内访问困难，可改用本地自托管版本。
+                </div>`);
             return;
         }
 
