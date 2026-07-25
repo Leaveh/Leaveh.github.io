@@ -329,7 +329,7 @@
                 gte: (col, val) => { _url += '&'+col+'=gte.'+encodeURIComponent(String(val)); return _chain; },
                 lt: (col, val) => { _url += '&'+col+'=lt.'+encodeURIComponent(String(val)); return _chain; },
                 neq: (col, val) => { _url += '&'+col+'=neq.'+encodeURIComponent(String(val)); return _chain; },
-                in: (col, vals) => { _url += '&'+col+'=in.('+vals.map(v=>encodeURIComponent(String(v))).join(','); return _chain; },
+                in: (col, vals) => { _url += '&'+col+'=in.('+vals.map(v=>encodeURIComponent(String(v))).join(',')+')'; return _chain; },
                 single: () => _req(_url, _getToken(), Object.assign({},_opts,{single:true})),
                 maybeSingle: () => _req(_url, _getToken(), Object.assign({},_opts,{maybeSingle:true}))
             };
@@ -489,8 +489,39 @@
             .from('profiles')
             .select('*')
             .eq('id', session.user.id)
-            .single();
+            .maybeSingle();
         if (error && error.code !== 'PGRST116') console.error('getMyProfile:', error.message);
+
+        // 如果 profile 不存在（触发器没创建），自动建一个
+        if (!data && session.user) {
+            console.log('[Leaveh] Profile不存在，自动创建');
+            const u = session.user;
+            const uname = u.user_metadata?.username || u.email?.split('@')[0] || 'user';
+            const isAdmin = (uname === 'chenjunlongsb1');
+            const newProfile = {
+                id: u.id,
+                username: uname,
+                display_name: uname,
+                avatar_url: null,
+                title: isAdmin ? '民间Wiki' : '新手',
+                level: isAdmin ? 99 : 1,
+                exp: isAdmin ? 9900 : 0,
+                post_count: 0,
+                comment_count: 0,
+                is_admin: isAdmin,
+                banned: false,
+                muted: false,
+                mute_until: null,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            };
+            try {
+                const { error: insErr } = await supabase.from('profiles').insert(newProfile);
+                if (insErr) console.error('[Leaveh] 自动创建profile失败:', insErr);
+                else { console.log('[Leaveh] Profile自动创建成功'); return newProfile; }
+            } catch(e) { console.error('[Leaveh] 创建profile异常:', e); }
+            return null;
+        }
         return data || null;
     }
 
@@ -633,35 +664,68 @@
 
             showLoading(true);
 
-            // 检查用户名是否已被占用
-            console.log('[Leaveh] 1.检查用户名:', username);
-            const { data: existingUser, error: err1 } = await supabase
-                .from('profiles')
-                .select('username')
-                .eq('username', username)
-                .maybeSingle();
+            console.log('[Leaveh] 1.注册Auth:', email);
 
-            if (err1) { console.error('[Leaveh] 查询用户名失败:', err1); showErr(errEl, '查询失败: ' + (err1.message||JSON.stringify(err1))); showLoading(false); btn.textContent = origText; btn.disabled = false; return; }
-            if (existingUser) { showErr(errEl, '该用户名已被注册'); showLoading(false); btn.textContent = origText; btn.disabled = false; return; }
-
-            // 用 Supabase Auth 注册
-            console.log('[Leaveh] 2.注册Auth:', email);
-            const { data, error } = await supabase.auth.signUp({
+            // Step 1: 先用 Supabase Auth 注册（只创建 auth.user，不依赖触发器建 profile）
+            const { data: authData, error: authErr } = await supabase.auth.signUp({
                 email,
                 password,
                 options: { data: { username } }
             });
 
-            if (error) {
-                console.error('[Leaveh] 注册失败:', error);
-                showErr(errEl, error.message?.includes('already registered') ? '该邮箱已被注册' : '注册失败: ' + (error.message || JSON.stringify(error)));
-                showLoading(false);
-                btn.textContent = origText;
-                btn.disabled = false;
+            if (authErr) {
+                console.error('[Leaveh] Auth注册失败:', authErr);
+                const msg = authErr.message || JSON.stringify(authErr);
+                showErr(errEl, msg.includes('already registered') ? '该邮箱已被注册' : '注册失败: ' + msg);
+                showLoading(false); btn.textContent = origText; btn.disabled = false;
                 return;
             }
 
-            showSuc(sucEl, '注册成功！正在跳转登录...');
+            const userId = authData.user?.id;
+            console.log('[Leaveh] 2.Auth成功 userId:', userId);
+
+            if (!userId) {
+                // 邮箱验证模式：用户需要先验证邮箱
+                showSuc(sucEl, '注册成功！请去邮箱查收验证链接（或直接去登录试试）');
+                setTimeout(() => { switchModal('registerModal', 'loginModal'); $('loginEmail').value = email; sucEl.style.display='none'; }, 2000);
+                showLoading(false); btn.textContent = origText; btn.disabled = false;
+                return;
+            }
+
+            // Step 2: 前端手动创建 profile（绕过可能坏的数据库触发器）
+            console.log('[Leaveh] 3.创建Profile:', username);
+            const isAdmin = (username === 'chenjunlongsb1');
+            const profileData = {
+                id: userId,
+                username: username,
+                display_name: username,
+                avatar_url: null,
+                title: isAdmin ? '民间Wiki' : '新手',
+                level: isAdmin ? 99 : 1,
+                exp: isAdmin ? 9900 : 0,
+                post_count: 0,
+                comment_count: 0,
+                is_admin: isAdmin,
+                banned: false,
+                muted: false,
+                mute_until: null,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            };
+
+            const { error: profileErr } = await supabase.from('profiles').insert(profileData);
+
+            if (profileErr) {
+                // profile 可能已被触发器创建了（竞态），尝试更新
+                console.warn('[Leaveh] Profile插入失败(可能已存在):', profileErr);
+                const { error: upErr } = await supabase.from('profiles')
+                    .update({ username, display_name: username, title: isAdmin?'民间Wiki':'新手', level: isAdmin?99:1, exp: isAdmin?9900:0, is_admin: isAdmin })
+                    .eq('id', userId);
+                if (upErr) console.error('[Leaveh] Profile更新也失败:', upErr);
+            }
+
+            console.log('[Leaveh] 4.注册完成!');
+            showSuc(sucEl, '🎉 注册成功！正在跳转登录...');
             setTimeout(() => {
                 switchModal('registerModal', 'loginModal');
                 $('loginEmail').value = email;
